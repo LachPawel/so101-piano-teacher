@@ -85,7 +85,7 @@ PIANO_TAIL_S = 0.2  # the software piano dies away this fast once its key is up 
 # A key the arm leaves resting down still fades: halving every 0.45 s (keys_synth.HOLD_HALF_S), it is about
 # 40 dB down after this long. After that the piano no longer covers the voice, key up or not.
 HELD_QUIET_S = 2.5
-JOHN_S = 1.5  # beginner mode: John sings for 1.6 s from the key's sound; this long after the arm is done, he is too
+JOHN_S = 1.9  # beginner mode: John sings for 1.6 s from the key's sound; this long after it he is done
 ARM_REACH_S = 4.0  # the arm needs up to this long to reach a key and sound it
 WARMUP_WORDS = {"warm", "warmup", "warming"}
 WARMUP_NOTES = ["do", "re", "mi", "fa", "sol", "la", "sol", "fa", "mi", "re", "do"]
@@ -671,7 +671,8 @@ class Teacher:
     ) -> None:
         self.send, self.hands, self.audio, self.listen_s = send, hands, audio, listen_s
         # Beginner mode: John (the display's singing head, web/chimera) sings the note on its name as the
-        # arm's key sounds; this long after, the arm plays it again and the user sings along. 0: off.
+        # arm's key sounds, for this long; then the teacher says "Now your turn", the arm plays it again and
+        # the user sings along. 0: off.
         self.show_s = show_s
         self.strict = True  # the coach; False for the relaxed jukebox of --songs
         self.voice = Speedup(voice_speed)
@@ -809,14 +810,21 @@ class Teacher:
             "The jam is over. Give the band one short line of praise in character, then ask if they want another round.",
         )
 
-    async def sing_back(self, note: str) -> tuple[str, str]:
+    async def sing_back(self, note: str, delegation_id: str | None = None) -> tuple[str, str]:
         """The arm plays a note and the user sings along, holding it on after the piano stops. SwiftF0 measures
         only the singing after the piano is silent: while it rings, the microphone hears the piano too.
         Returns the fact and what to say."""
         if self.show_s > 0:  # beginner: the arm plays it and John sings it as the key sounds; then the usual turn
             emit("phase", name="get_ready", text="John shows how", note=note)
-            await asyncio.to_thread(self.hands.play, [note])
-            await asyncio.sleep(self.show_s)  # he holds his note a little longer than the key
+            sounded_at: list[float] = []
+            await asyncio.to_thread(self.hands.play, [note], lambda _index: sounded_at.append(time.perf_counter()))
+            # he sings from the key's sound, a little longer than the key: let him finish
+            if sounded_at and (left := sounded_at[0] + self.show_s - time.perf_counter()) > 0:
+                await asyncio.sleep(left)
+            # John is gone, the teacher hands over out loud, and only then does the arm play it again
+            emit("phase", name="handover", text="Now your turn", note=note)
+            await self.tell(delegation_id, 'Say exactly these three words and nothing else: "Now your turn."')
+            await self.audio.finished_speaking(starts_within=4.0)
         # Your turn starts on the display as the arm starts the note: it already draws what it hears.
         emit("your_turn", note=note, seconds=self.listen_s + ARM_REACH_S)
         loop = asyncio.get_running_loop()
@@ -869,7 +877,7 @@ class Teacher:
         await self.tell(delegation_id, f"Tell the user: the arm plays {note}, {self.shown()}they sing it back on la.")
         await self.audio.finished_speaking()
         for attempt in (1, 2):  # a second go when nothing was heard, while the teacher's ears stay closed
-            fact, answer = await self.sing_back(note)
+            fact, answer = await self.sing_back(note, delegation_id)
             await self.tell(delegation_id, f"{fact} Tell them that, then: {answer}")
             if not fact.startswith(("Nothing clear", "The piano kept")) or attempt == 2:
                 break
@@ -905,7 +913,7 @@ class Teacher:
             for index, note in enumerate(notes):
                 coming = notes[index + 1] if index + 1 < len(notes) else None
                 for attempt in range(1, tries + 1):
-                    fact, answer = await self.sing_back(note)
+                    fact, answer = await self.sing_back(note, delegation_id)
                     good = answer == "Well done."
                     last_try = good or attempt == tries
                     after = (

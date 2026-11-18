@@ -19,7 +19,7 @@ const LANE_NOW = 0.8; // where "now" sits across the lane; the asked note runs o
 const LOW = 58.5; // the lane's bottom and top, in MIDI notes: A#3 to B4, around the six keys
 const HIGH = 70.5;
 const FRESH_S = 0.35; // a reading older than this is not "now"
-const LANE_PHASES = new Set(["get_ready", "your_turn", "feedback"]);
+const LANE_PHASES = new Set(["get_ready", "handover", "your_turn", "feedback"]);
 const esc = (text) => String(text).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
 const clamp = (value, lo, hi) => Math.max(lo, Math.min(hi, value));
 
@@ -63,6 +63,7 @@ export function headline(state) {
       return note ? { html: `The arm<br>plays ${note}.`, tone: "arm" } : { html: "The arm<br>plays.", tone: "arm" };
     case "get_ready":
       return { html: `John sings ${note ?? ""}.<br>Watch.`, tone: "ready" };
+    case "handover": // the teacher says "Now your turn"; the arm has not started yet
     case "your_turn":
       return { html: `Your turn:<br>sing ${note ?? ""}.`, tone: "sing" };
     case "feedback": {

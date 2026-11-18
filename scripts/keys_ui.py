@@ -219,7 +219,10 @@ class Hub:
         state = self.state
         turn = state["turn"]
         over = state["phase"] == "your_turn" and (turn is None or now > turn["t"] + turn["seconds"] + TURN_GRACE_S)
-        stale = state["phase"] in ("playing", "get_ready", "feedback", "thinking") and now > self.last_event + STALE_S
+        stale = (
+            state["phase"] in ("playing", "get_ready", "handover", "feedback", "thinking")
+            and now > self.last_event + STALE_S
+        )
         if over or stale:
             self.set(phase="idle", phase_text="Ready", asked=None, arm_busy=False, mode="" if stale else state["mode"])
 
@@ -458,7 +461,10 @@ def demo(hub: Hub, stop: threading.Event) -> None:
         hub.set(keys_down=[])
         hub.piano_until = time.time() + PIANO_TAIL_S
         show("done")
-        time.sleep(1.5)
+        time.sleep(0.9)
+        show("phase", name="handover", text="Now your turn", note="mi")  # the teacher says it out loud
+        show("teacher", text="Now your turn.")
+        time.sleep(1.6)
         show("your_turn", note="mi", seconds=9.0)  # the window opens as the arm starts the note
         show("tune", notes=["mi"], policy="flow+smooth+60hz (demo)")
         show("ask", note="mi", index=0)

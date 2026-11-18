@@ -1062,7 +1062,8 @@ def test_voice_teacher_routes_requests_to_the_arm_and_the_pitch_check() -> None:
         assert arm.asked == [["mi"], ["mi"]]
         facts = [e["content"] for e in sent if e["type"] == "session.commentary.append"]
         assert "John, the singing head on the screen" in facts[0]
-        assert facts[1] == "The user sang mi and was in tune. Tell them that, then: Well done."
+        assert facts[1] == 'Say exactly these three words and nothing else: "Now your turn."'  # before the arm's repeat
+        assert facts[2] == "The user sang mi and was in tune. Tell them that, then: Well done."
 
         # The warm-up: up and down the six notes, nothing recorded. A level said out loud sets John.
         await teacher.on_event({"type": "session.output_transcript.delta", "delta": "Ok."})
