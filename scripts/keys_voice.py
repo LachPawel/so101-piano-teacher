@@ -87,6 +87,27 @@ PIANO_TAIL_S = 0.2  # the software piano dies away this fast once its key is up 
 HELD_QUIET_S = 2.5
 JOHN_S = 2.6  # beginner mode: how long John has to sing a note on the display (he sings 1.6 s)
 ARM_REACH_S = 4.0  # the arm needs up to this long to reach a key and sound it
+WARMUP_WORDS = {"warm", "warmup", "warming"}
+WARMUP_NOTES = ["do", "re", "mi", "fa", "sol", "la", "sol", "fa", "mi", "re", "do"]
+# What the user says about their experience: beginners get John, the others go straight to the notes.
+BEGINNER = re.compile(
+    r"\b(beginner|first time|never (?:sung|sang|done)|new to (?:this|singing)|newbie|from scratch|the basics|"
+    r"show me how|with john|can'?t sing|cannot sing)\b"
+)
+DIRECT = re.compile(
+    r"\b(experienced|advanced|(?:sung|sang|done (?:this|it)) before|skip (?:john|the head|it)|without john|no john|"
+    r"straight to|directly|i can sing)\b"
+)
+
+
+def said_level(said: str) -> str | None:
+    """ "beginner" or "direct" when the user tells their level, else None."""
+    lowered = said.lower()
+    if BEGINNER.search(lowered):
+        return "beginner"
+    return "direct" if DIRECT.search(lowered) else None
+
+
 BAND_WORDS = {"band", "jam", "jamming", "backing", "guitar", "accompany", "riff"}
 BAND_RIFF, BAND_LOOPS = "stomp", 4  # band mode: this tune's first line, this many times round
 CHECK_WORDS = {"check", "pitch", "tune", "listen", "hear"}  # "check my pitch", "am I in tune", "listen to me"
@@ -123,15 +144,17 @@ Morning Mood (Grieg), Dies Irae, Moonlight, and its own riffs Stomp, Gravel Road
 when the chat goes quiet, but never push. You do not give lessons unless the user asks for one.
 
 Hand the request to the backend whenever the user asks you to play notes, a tune or anything at all, asks \
-for band mode, a jam or a backing track, asks for a lesson or to check their pitch, or wants to stop. While \
+for band mode, a jam or a backing track, asks for a warm-up, a lesson or to check their pitch, or wants \
+to stop. While \
 you wait, say only a few words, like "Coming up.". Never describe what the arm did before the backend tells \
 you.
 
 In band mode the arm loops a riff, John, the singing head on the screen, sings along, and the user plays \
 over it on their own instrument.
 
-You cannot hear pitch. Only the backend can measure it. When the backend gives you a result, say it in \
-character, but keep every note name and every number exactly as given."""
+You cannot hear pitch, so never offer to match their humming or to coach their breathing. Only the backend can \
+measure pitch. When the backend gives you a result, say it in character, but keep every note name and every \
+number exactly as given."""
 
 INSTRUCTIONS = """You are Reachy, a tiny, cute robot who talks like a huge, tough singing coach: half \
 action-movie hero with short punchy one-liners, half no-excuses drill instructor who believes in the user \
@@ -144,12 +167,18 @@ single word. Keep every reply to one or two short sentences. Speak English.
 
 Next to you a robot arm plays six piano keys: do, re, mi, fa, sol, la.
 
-You are a proactive teacher. When the conversation starts, greet the user and invite them straight away to \
-a singing lesson: ask if they are ready. If they chat about something else, answer in a few words and \
-steer back to singing. Keep pushing the user to sing and to do better.
+You are a proactive teacher, and you lead. When the conversation starts, greet the user in one line and ask \
+one thing: is this their first time singing, or have they sung before? Beginners get John, the singing head \
+on the screen, who shows every note before they sing it; experienced singers go straight to the notes. Then \
+always offer something concrete, never an open question: a warm-up (the arm and John go up and down the six \
+notes and the user sings along, nothing judged), a lesson (three notes, each one checked), a song the arm \
+plays, or band mode (the arm loops a riff and the user plays over it). If the user does not choose, pick \
+for them: the warm-up first, then the lesson. If they chat about something else, answer in a few words and \
+steer back with the next concrete step. Keep pushing the user to sing and to do better.
 
 Hand the request to the backend whenever the user asks you to play notes or a tune, to start a singing \
-lesson, to check their pitch or listen to them sing, for band mode, a jam or a backing track, or to stop, and also when they say yes, okay or \
+lesson or a warm-up, to check their pitch or listen to them sing, for band mode, a jam or a backing track, \
+or to stop, when they tell you their level (beginner, first time, sung before, experienced, skip John), and also when they say yes, okay or \
 ready after you offered a lesson or another round. While you wait, say only a few words, like \
 a gruff "On it.". Never describe what the arm did before the backend tells you.
 
@@ -211,6 +240,8 @@ def understand(said: str, last_note: str, choose: Callable[[list[str]], str] = r
     if tokens & BAND_WORDS:
         named = next((song for song, words in SONG_WORDS.items() if song in SONGS and words & tokens), None)
         return kc.Command("band", song=named or BAND_RIFF)
+    if tokens & WARMUP_WORDS:
+        return kc.Command("warmup")
     lesson = bool(tokens & {"teach", "learn", "lesson", "sing", "singing"})
     if "check" in tokens or (CHECK_WORDS & tokens and not lesson):
         named = NAMED_NOTE.search(lowered)
@@ -642,6 +673,7 @@ class Teacher:
         # Beginner mode: after the arm, John (the display's singing head, web/chimera) sings the note on its
         # name for this long, then the arm plays it again and the user sings along. 0: off.
         self.show_s = show_s
+        self.strict = True  # the coach; False for the relaxed jukebox of --songs
         self.voice = Speedup(voice_speed)
         self.focus = focus  # Voice Focus for the singing, apart from the one on the live microphone
         self.rounds = rounds  # rounds of three notes in one lesson, before asking "another one?"
@@ -683,6 +715,11 @@ class Teacher:
     async def handle(self, delegation_id: str | None) -> None:
         said = self.transcript.take()
         command = understand(said, self.last_note)
+        level = said_level(said)
+        if level:  # "I'm a beginner", "I've sung before": John shows each note, or not
+            self.show_s = JOHN_S if level == "beginner" else 0.0
+            if command.kind == "unknown":
+                command = kc.Command("teach")  # the answer to "first time?" starts the lesson
         if (
             command.kind == "unknown"
             and self.offered
@@ -707,6 +744,8 @@ class Teacher:
                 await self.play(delegation_id, keys_play.song_notes(command.song, 1))
             elif command.kind == "band" and command.song:
                 await self.band(delegation_id, command.song)
+            elif command.kind == "warmup":
+                await self.warmup(delegation_id)
             elif command.kind == "check":
                 await self.check(delegation_id, command.note)
             elif command.kind in ("teach", "sing"):
@@ -714,8 +753,8 @@ class Teacher:
             else:
                 await self.tell(
                     delegation_id,
-                    "The request was not understood. Ask the user to say, for example: play mi sol la, "
-                    "play largo, play anything, band mode, check my pitch, or start the lesson.",
+                    "The request was not understood. Offer two concrete things to do next, for example the "
+                    "warm-up or the lesson, and mention they can also ask for a song or band mode.",
                 )
             await self.audio.finished_speaking()
         finally:
@@ -727,6 +766,27 @@ class Teacher:
         played = await asyncio.to_thread(self.hands.play, notes)
         self.last_note = notes[-1]
         await self.tell(delegation_id, describe(played))
+
+    async def warmup(self, delegation_id: str | None) -> None:
+        """The warm-up: the arm goes up and down the six notes, John on the display sings each one it
+        presses, and the user sings along. Nothing is judged."""
+        await self.tell(
+            delegation_id,
+            "Warm-up. Tell the user: the arm goes up and down the six notes, John sings each one on the screen, "
+            "and they sing along. Nobody is judging yet.",
+        )
+        await self.audio.finished_speaking()
+        emit("mode", name="warmup")
+        try:
+            await asyncio.to_thread(self.hands.play, WARMUP_NOTES)
+        finally:
+            emit("mode", name="")
+        self.last_note = WARMUP_NOTES[-1]
+        self.offered = True
+        await self.tell(
+            delegation_id,
+            "The warm-up is done. Say one short line about it, then offer the lesson right away: three notes, each one checked.",
+        )
 
     async def band(self, delegation_id: str | None, song: str) -> None:
         """Band mode: the arm loops a riff as the backing track, John on the display sings each note it
@@ -823,7 +883,7 @@ class Teacher:
         await self.audio.finished_speaking(starts_within=1.5)  # let its own "On it!" finish first
         await self.tell(
             delegation_id,
-            f"Start the lesson like a strict coach. Tell the user: the arm plays a note, starting with "
+            f"Start the lesson{' like a strict coach' if self.strict else ''}. Tell the user: the arm plays a note, starting with "
             f"{rounds[0][0]}; "
             + (
                 "then John, the singing head on the screen, sings it to show how; then the arm plays it again and they "
@@ -921,7 +981,8 @@ async def run(args: argparse.Namespace) -> None:
         async def send(event: dict[str, Any]) -> None:
             await socket.send(json.dumps(event))
 
-        teacher = Teacher(send, hands, audio, voice_speed=args.cartoon, focus=focus, show_s=JOHN_S if args.beginner else 0.0)
+        teacher = Teacher(send, hands, audio, voice_speed=args.cartoon, focus=focus, show_s=0.0 if args.direct else JOHN_S)
+        teacher.strict = not args.songs
         teacher.offered = not args.songs  # the jukebox offers no lesson, so a bare "yes" starts none
         await send(
             {
@@ -997,10 +1058,12 @@ def main(argv: list[str] | None = None) -> None:
         help="Just chat and play: Reachy is a relaxed jukebox that plays tunes on request and pushes no lessons",
     )
     parser.add_argument(
-        "--beginner",
+        "--direct",
         action="store_true",
-        help="John, the display's singing head (web/chimera), sings each note after the arm; then the arm plays it again",
+        help="Start without John, the display's singing head, who shows each note first. By voice any time: "
+        '"I\'m a beginner" turns him on, "I\'ve sung before" or "skip John" turns him off',
     )
+    parser.add_argument("--beginner", action="store_true", help=argparse.SUPPRESS)  # the default now
     parser.add_argument(
         "--full-duplex",
         action="store_true",

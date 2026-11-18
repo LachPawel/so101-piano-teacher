@@ -84,7 +84,7 @@ index e35f9ce..424705c 100644
  const HEAT: [number, string][] = [[0, "#3a2408"], [0.35, "#c9822a"], [0.6, "#ffb340"], [0.82, "#ffe39a"], [1, "#fff8ec"]];
  /** sound level 0..1 → dim amber → amber → pale yellow → white */
 diff --git a/src/ui/components/AnatomyView3D.tsx b/src/ui/components/AnatomyView3D.tsx
-index fbcb2cc..48d2f8b 100644
+index fbcb2cc..b6c0b05 100644
 --- a/src/ui/components/AnatomyView3D.tsx
 +++ b/src/ui/components/AnatomyView3D.tsx
 @@ -18,7 +18,7 @@ import { sameBody } from "../body.ts";
@@ -96,7 +96,19 @@ index fbcb2cc..48d2f8b 100644
  import { articulatorSlots, tractInfo, type InfoFn, type OverlayFn, type SlotsFn } from "./AnatomyView.tsx";
  import type { ViewFlags } from "../render/anatomy.ts";
  import type { HumanArtic } from "../../wasm/engine.ts";
-@@ -76,7 +76,7 @@ export function AnatomyView3D(props: { slots?: SlotsFn; info?: InfoFn; showForma
+@@ -41,7 +41,10 @@ export interface HeadFeed {
+ 
+ const ease = (t: number) => (t < 0.5 ? 4 * t * t * t : 1 - (-2 * t + 2) ** 3 / 2);
+ 
+-export function AnatomyView3D(props: { slots?: SlotsFn; info?: InfoFn; showFormants?: boolean; overlay?: OverlayFn; feed?: HeadFeed; readouts?: boolean; view?: ViewFlags }) {
++export function AnatomyView3D(props: { slots?: SlotsFn; info?: InfoFn; showFormants?: boolean; overlay?: OverlayFn; feed?: HeadFeed; readouts?: boolean; view?: ViewFlags; paused?: () => boolean; framing?: { down: number; zoom: number } }) {
++  // an embedding page may hide the head: while `paused()` is true nothing is simulated or drawn
++  const pausedRef = useRef(props.paused);
++  pausedRef.current = props.paused;
+   const feedRef = useRef<HeadFeed | undefined>(props.feed);
+   feedRef.current = props.feed;
+   // the live head's view flags, when not the face screen's toggles (the Song page's fixed look)
+@@ -76,9 +79,10 @@ export function AnatomyView3D(props: { slots?: SlotsFn; info?: InfoFn; showForma
      }
      // the palette's sRGB values go straight through, as on the 2D screens
      gl.outputColorSpace = THREE.LinearSRGBColorSpace;
@@ -104,8 +116,23 @@ index fbcb2cc..48d2f8b 100644
 +    gl.setClearColor(THEME.bg, 1);
      const r = new Anatomy3D();
      r.centred = !readoutsRef.current;
++    if (props.framing) r.framing = props.framing;
      r.facing = feedRef.current?.facing ?? 1;
-@@ -228,7 +228,7 @@ export function AnatomyView3D(props: { slots?: SlotsFn; info?: InfoFn; showForma
+     const glow = new Glow();
+     const camera = r.camera;
+@@ -172,6 +176,11 @@ export function AnatomyView3D(props: { slots?: SlotsFn; info?: InfoFn; showForma
+     let formants: number[] = [];
+     let epoch = -1;
+     const loop = (now: number) => {
++      if (pausedRef.current?.()) {
++        last = now;
++        raf = requestAnimationFrame(loop);
++        return;
++      }
+       const dt = Math.min(0.05, (now - last) / 1000);
+       // the face's expression keeps real time (a held note lasts as long at a low frame rate)
+       const elapsed = Math.min(0.5, (now - last) / 1000);
+@@ -228,7 +237,7 @@ export function AnatomyView3D(props: { slots?: SlotsFn; info?: InfoFn; showForma
          gl.render(r.scene, camera);
          ctx.setTransform(1, 0, 0, 1, 0, 0);
          ctx.globalCompositeOperation = "source-over";
@@ -115,7 +142,7 @@ index fbcb2cc..48d2f8b 100644
          ctx.drawImage(glCanvas, 0, 0, canvas.width, canvas.height);
          ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
 diff --git a/src/ui/render/anatomy3d.ts b/src/ui/render/anatomy3d.ts
-index 5013f5a..bcd286a 100644
+index 5013f5a..e10f6f2 100644
 --- a/src/ui/render/anatomy3d.ts
 +++ b/src/ui/render/anatomy3d.ts
 @@ -20,7 +20,7 @@ import type { HumanArtic, HumanFrame } from "../../wasm/types.ts";
@@ -127,7 +154,16 @@ index 5013f5a..bcd286a 100644
  import { catmullRom, rotateAbout, type Vec } from "./geom.ts";
  import { chaikin, type Pt } from "./vector.ts";
  import { Beams, Poly } from "./beams3d.ts";
-@@ -668,7 +668,7 @@ export class Anatomy3D {
+@@ -641,6 +641,8 @@ export class Anatomy3D {
+   compact = false;
+   /** no readouts beside the head: keep it in the middle of a wide screen too */
+   centred = false;
++  /** look this many cm below the head's centre, from this much further away (an embed that shows the throat) */
++  framing = { down: 0, zoom: 1 };
+   /** which way the turned home view shows the face: 1 to the right, −1 to the left (a duet's
+    *  second head, so the two sing towards each other) */
+   facing: 1 | -1 = 1;
+@@ -668,7 +670,7 @@ export class Anatomy3D {
  
    constructor() {
      this.scene.add(this.beams.group);
@@ -136,6 +172,17 @@ index 5013f5a..bcd286a 100644
      for (let i = 0; i < 200; i++) this.particles.push({ s: Math.random() * 17, u: Math.random() * 2 - 1, v: Math.random() * 2 - 1, life: Math.random(), px: NaN, py: NaN, pz: NaN });
    }
  
+@@ -704,8 +706,9 @@ export class Anatomy3D {
+     const r = this.restFor(model);
+     const half = Math.tan((this.camera.fov * Math.PI) / 360);
+     // fit the head's height (and its width in a narrow screen) at a male's size, so bodies compare
+-    const d = 1.1 * Math.max(15.2 / half, 11 / (half * Math.max(0.3, this.camera.aspect)));
++    const d = this.framing.zoom * 1.1 * Math.max(15.2 / half, 11 / (half * Math.max(0.3, this.camera.aspect)));
+     const target = r.center.clone();
++    target.y -= this.framing.down;
+     // facing left: the same three-quarter view from the head's other side
+     const az = this.facing > 0 ? 0.62 : Math.PI - 0.62, el = 0.2;
+     return {
 diff --git a/src/ui/render/beams3d.ts b/src/ui/render/beams3d.ts
 index d7f5189..6409ece 100644
 --- a/src/ui/render/beams3d.ts
@@ -247,10 +294,10 @@ index 79b6a3e..75c45b7 100644
      if (this.small.width !== w || this.small.height !== h) {
 diff --git a/src/ui/teacher/Coach.tsx b/src/ui/teacher/Coach.tsx
 new file mode 100644
-index 0000000..501ba1e
+index 0000000..036bff1
 --- /dev/null
 +++ b/src/ui/teacher/Coach.tsx
-@@ -0,0 +1,226 @@
+@@ -0,0 +1,256 @@
 +/**
 + * The coach embed, "John": the 3D head. He sings one note when the page around asks, on its
 + * solfège name (do re mi fa sol la, from exact IPA), so you see the tongue, jaw and lips before
@@ -261,11 +308,14 @@ index 0000000..501ba1e
 + *        { type: "idle", text? }                                       clear the note, say something else
 + *        { type: "body", body: "male" | "female" | "child" }
 + *        { type: "mute", on }                                          the head still sings, silently
++ *        { type: "sleep" } / { type: "wake" }                          hidden by the page: stop drawing and stop the
++ *                                                                      voice engine (a "sing" wakes him too)
 + *   out  { source: "chimera-coach", type: "ready" | "started" | "singing" | "sang" | "needs-click", midi? }
 + *        { source: "chimera-coach", type: "pitch", f0 }                 his pitch (Hz), 20 times a second while he sings
 + *
-+ * Browsers start audio only from a click inside this frame, so until then a Start button waits
-+ * over the head, and a note asked for meanwhile is sung as soon as it is clicked.
++ * Browsers start audio only once the page has been clicked or a key pressed (unless the site is
++ * allowed to autoplay). He tries at once; if that is refused, the first click or key anywhere starts
++ * him: in this frame, or in the page around it, which calls window.__coachNudge() from its own handler.
 + * URL: ?body=male|female|child, ?muted=1.
 + */
 +import { StrictMode, useEffect, useState } from "react";
@@ -316,6 +366,8 @@ index 0000000..501ba1e
 +const cap = (w: string) => w.charAt(0).toUpperCase() + w.slice(1);
 +
 +const VIEW: ViewFlags = { pressure: true, particles: true, grid: false, calipers: false };
++// the head sits high in the frame, so the throat and the voice box under the jaw are in view
++const FRAMING = { down: 4.5, zoom: 1.22 };
 +const words = mouthWords(sungNow, V.green);
 +
 +interface Ask {
@@ -335,9 +387,19 @@ index 0000000..501ba1e
 +
 +const BODIES: BodyName[] = ["male", "female", "child"];
 +
++/** Asleep (the page hid him): the head is not drawn and the audio engine is suspended, so he costs nothing. */
++let asleep = false;
++const isAsleep = () => asleep;
++function setAsleep(on: boolean): void {
++  asleep = on;
++  const ctx = (engine as unknown as { ctx?: AudioContext }).ctx;
++  if (!ctx || !useStore.getState().started) return;
++  if (on) void ctx.suspend().catch(() => {});
++  else void ctx.resume().catch(() => {});
++}
++
 +function Coach() {
 +  const started = useStore((s) => s.started);
-+  const starting = useStore((s) => s.starting);
 +  const [caption, setCaption] = useState<Caption>({ line: "Hi, I'm John.", quip: "All throat, no body. I sing it first, you copy it.", mood: "wait" });
 +  const [pending, setPending] = useState<Ask | null>(null);
 +  const [muted, setMuted] = useState(new URLSearchParams(location.search).get("muted") === "1");
@@ -373,7 +435,7 @@ index 0000000..501ba1e
 +      const quip = ask.backing ? "Backing vocals. Living the dream." : (QUIPS[shown] ?? ANY_QUIP);
 +      if (!st.started) {
 +        setPending(ask);
-+        setCaption({ line: `I want to sing ${ask.name ?? noteName(ask.midi)}!`, quip: "Click Start, browsers won't let me make a sound until you do.", mood: "wait" });
++        setCaption({ line: `I want to sing ${ask.name ?? noteName(ask.midi)}!`, quip: "Click anywhere. Browsers won't let me make a sound until you do.", mood: "wait" });
 +        tell("needs-click", { midi: ask.midi });
 +        return;
 +      }
@@ -403,6 +465,7 @@ index 0000000..501ba1e
 +      if (e.origin !== location.origin || !e.data || typeof e.data !== "object") return;
 +      const m = e.data as Record<string, unknown>;
 +      if (m.type === "sing" && typeof m.midi === "number" && m.midi >= 24 && m.midi <= 96) {
++        setAsleep(false);
 +        sing({ midi: Math.round(m.midi), word: typeof m.word === "string" && m.word ? m.word.toLowerCase() : "la", seconds: typeof m.seconds === "number" ? m.seconds : 1.6, name: typeof m.name === "string" ? m.name : undefined, backing: m.backing === true });
 +      } else if (m.type === "stop") {
 +        turn++;
@@ -417,6 +480,9 @@ index 0000000..501ba1e
 +        useStore.getState().setBody(PRESETS[m.body as BodyName]);
 +      } else if (m.type === "mute") {
 +        setMuted(!!m.on);
++      } else if (m.type === "sleep" || m.type === "wake") {
++        if (m.type === "sleep") release();
++        setAsleep(m.type === "sleep");
 +      }
 +    };
 +    window.addEventListener("message", onMessage);
@@ -428,41 +494,52 @@ index 0000000..501ba1e
 +    };
 +  }, []);
 +
-+  const start = async () => {
-+    await useStore.getState().start();
-+    if (!useStore.getState().started) return;
++  // Start the voice: now if the browser lets a page play sound unasked, else on the first click or key.
++  useEffect(() => {
++    const nudge = () => {
++      const ctx = (engine as unknown as { ctx?: AudioContext | null }).ctx;
++      // a start already waiting on the browser: resuming inside the gesture lets it through
++      const st = useStore.getState();
++      if (ctx && ctx.state !== "running" && !(asleep && st.started)) void ctx.resume().catch(() => {});
++      else if (!st.started) void st.start();
++    };
++    (window as unknown as { __coachNudge: () => void }).__coachNudge = nudge;
++    void useStore.getState().start();
++    window.addEventListener("pointerdown", nudge);
++    window.addEventListener("keydown", nudge);
++    return () => {
++      window.removeEventListener("pointerdown", nudge);
++      window.removeEventListener("keydown", nudge);
++    };
++  }, []);
++
++  useEffect(() => {
++    if (!started) return;
 +    tell("started");
++    if (asleep) setAsleep(true); // started while hidden: straight back to sleep
 +    const ask = pending;
 +    setPending(null);
 +    if (ask) (window as unknown as { __coachSing: (a: Ask) => void }).__coachSing(ask);
-+    else setCaption({ line: "Ready.", quip: "Warmed up. Waiting for the arm to play a note.", mood: "wait" });
-+  };
++  }, [started]);
 +
 +  return (
 +    <div className="coach">
 +      <div className="coach-head">
-+        <AnatomyView3D readouts={false} showFormants={false} overlay={words} view={VIEW} />
++        <AnatomyView3D readouts={false} showFormants={false} overlay={words} view={VIEW} paused={isAsleep} framing={FRAMING} />
 +      </div>
 +      <div className="coach-caption" data-mood={caption.mood}>
 +        <p className="coach-line">{caption.line}</p>
 +        <p className="coach-quip">{caption.quip}</p>
 +      </div>
 +      {!started && (
-+        <button className="coach-start" type="button" onClick={() => void start()} disabled={starting}>
-+          {starting ? "Clearing my throat…" : "Start John"}
-+          <small>sound needs one click</small>
-+        </button>
++        <p className="coach-credit">
++          voice by{" "}
++          <a href="https://github.com/jamesondh/chimera-vocal-synth" target="_blank" rel="noreferrer">
++            Chimera
++          </a>{" "}
++          (MIT)
++        </p>
 +      )}
-+      <button className="coach-mute" type="button" aria-pressed={muted} onClick={() => setMuted(!muted)} title="The head still sings, silently, so the microphone hears only you">
-+        {muted ? "Muted" : "Sound on"}
-+      </button>
-+      <p className="coach-credit">
-+        voice by{" "}
-+        <a href="https://github.com/jamesondh/chimera-vocal-synth" target="_blank" rel="noreferrer">
-+          Chimera
-+        </a>{" "}
-+        (MIT)
-+      </p>
 +    </div>
 +  );
 +}
@@ -479,10 +556,10 @@ index 0000000..501ba1e
 +}
 diff --git a/src/ui/teacher/teacher.css b/src/ui/teacher/teacher.css
 new file mode 100644
-index 0000000..f34e91b
+index 0000000..5c49039
 --- /dev/null
 +++ b/src/ui/teacher/teacher.css
-@@ -0,0 +1,149 @@
+@@ -0,0 +1,87 @@
 +/* The coach embed: the head fills the frame, words float over it. Colours and type are the piano
 +   teacher's (so101-piano-teacher web/css/style.css), so the frame sits on its page as one piece. */
 +html {
@@ -555,68 +632,6 @@ index 0000000..f34e91b
 +.coach-head {
 +  position: absolute;
 +  inset: 0;
-+}
-+
-+.coach-start {
-+  position: absolute;
-+  left: 50%;
-+  bottom: 24%;
-+  transform: translateX(-50%);
-+  display: flex;
-+  flex-direction: column;
-+  align-items: center;
-+  gap: 2px;
-+  padding: 11px 20px;
-+  border: 0;
-+  border-radius: 9px;
-+  background: var(--accent);
-+  color: var(--paper);
-+  font: 650 clamp(14px, 3.4vmin, 20px) var(--sans);
-+  cursor: pointer;
-+  box-shadow: 0 8px 24px rgba(64, 70, 45, 0.18);
-+  animation: coach-pulse 1.6s ease-in-out infinite;
-+}
-+
-+.coach-start small {
-+  font: 500 0.55em var(--mono);
-+  letter-spacing: 0.08em;
-+  opacity: 0.8;
-+}
-+
-+.coach-start:disabled {
-+  animation: none;
-+  cursor: progress;
-+}
-+
-+@keyframes coach-pulse {
-+  50% {
-+    box-shadow: 0 0 0 6px rgba(99, 119, 71, 0.2);
-+  }
-+}
-+
-+@media (prefers-reduced-motion: reduce) {
-+  .coach-start {
-+    animation: none;
-+  }
-+}
-+
-+.coach-mute {
-+  position: absolute;
-+  right: 10px;
-+  bottom: 8px;
-+  padding: 3px 9px;
-+  border: 1px solid #d8d4c6;
-+  border-radius: 7px;
-+  background: var(--paper);
-+  color: var(--muted);
-+  font: 500 10px var(--mono);
-+  letter-spacing: 0.06em;
-+  cursor: pointer;
-+}
-+
-+.coach-mute[aria-pressed="true"] {
-+  color: var(--warm);
-+  border-color: var(--warm);
 +}
 +
 +.coach-credit {

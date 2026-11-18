@@ -213,10 +213,17 @@ body.live .stage-legend, body.live .hint { display: none; }
 body.live .stage canvas#stage { z-index: 0; }
 body.live .lane { z-index: 3; }
 
-/* John, the singing head of beginner mode (js/chimera.js): half see-through over the pitch lane while he
-   shows the note, gone in your turn. Multiply lets the lane's rows and his pitch line show through. */
-.coach { position: absolute; right: 2%; bottom: 3%; width: min(44%, 640px); height: 42%; z-index: 4; mix-blend-mode: multiply; opacity: 0.88; pointer-events: none; transition: opacity 600ms, transform 600ms; }
-.coach[data-started="false"] { pointer-events: auto; }
-.coach[data-show="false"] { opacity: 0; transform: translateY(10px) scale(0.97); }
+/* John, the singing head (js/chimera.js): bottom left, half see-through over the pitch lane while he shows a
+   note, gone in your turn. Multiply lets the lane's rows show through; hidden, he is not composited at all. */
+.coach { position: absolute; left: 2%; bottom: 3%; width: min(38%, 560px); height: 42%; z-index: 4; border-radius: 18px; overflow: hidden; mix-blend-mode: multiply; opacity: 0.9; pointer-events: none; transition: opacity 600ms, transform 600ms, visibility 0s; }
+/* Band mode and the warm-up have no lane under him: he gets his own sheet of paper. */
+.coach[data-card="true"] { mix-blend-mode: normal; opacity: 1; background: #fff; border: 1px solid var(--line); box-shadow: 0 18px 50px rgba(64, 70, 45, 0.14); }
+.coach[data-show="false"] { opacity: 0; visibility: hidden; transform: translateY(10px) scale(0.97); transition: opacity 600ms, transform 600ms, visibility 0s 600ms; }
 .coach iframe { width: 100%; height: 100%; border: 0; display: block; background: transparent; }
 @media (prefers-reduced-motion: reduce) { .coach { transition: none; } }
+
+/* Live mode, less is more: only what you need to follow the lesson. */
+body.live .tagline, body.live .stage-eyebrow, body.live .stage-status, body.live .log-card, body.live .ears p, body.live .policy, body.live .scale, body.live .reading, body.live #lane-count, body.live #phase { display: none; }
+body.live .ears img { width: 100%; height: 72px; object-fit: cover; }
+#live-john { border-color: var(--warm); color: var(--warm); }
+.chip[hidden] { display: none; }

@@ -59,6 +59,7 @@ export function headline(state) {
       return { html: "Waking<br>the arm.", tone: "arm" };
     case "playing":
       if (state.mode === "band") return { html: "Band mode.<br>Play along.", tone: "sing" };
+      if (state.mode === "warmup") return { html: "Warm-up.<br>Sing along.", tone: "sing" };
       return note ? { html: `The arm<br>plays ${note}.`, tone: "arm" } : { html: "The arm<br>plays.", tone: "arm" };
     case "get_ready":
       return { html: `John sings ${note ?? ""}.<br>Watch.`, tone: "ready" };
@@ -189,13 +190,12 @@ export function startLive(stage) {
     $("countdown").hidden = !(s.phase === "your_turn" || s.phase === "feedback") || !entry;
     if (s.phase === "playing" && entry) {
       const press = s.press && Date.now() / 1000 - s.press.t < 4 ? s.press : null;
-      setFeedback(`Subtask: “play ${entry.word}, the ${ORDINAL[entry.word]} key”` + (press ? ` · MIDI heard ${press.name}` : ""),
-        press ? (press.ok === false ? "off" : "good") : "");
+      setFeedback(press && press.ok === false ? `The arm hit ${press.name}` : "", press && press.ok === false ? "off" : "");
     } else if (s.phase === "feedback") {
       const cents = s.sung?.cents ?? null;
       setFeedback(cents == null ? "No clear note was heard." : centsWords(cents), verdict(cents).tone === "ok" ? "good live" : "off live");
     } else if (s.phase === "listening") {
-      setFeedback("Say “play mi sol la” or “start the lesson”.", "");
+      setFeedback("", "");
     } else if (s.phase !== "your_turn") {
       setFeedback("", "");
     }
@@ -240,7 +240,7 @@ export function startLive(stage) {
     const cents = heard && goal !== null ? 100 * (foldTo(heard.midi, goal) - goal) : null;
 
     // The words over the lane: what to do right now. It listens only in your turn, after the piano.
-    let word = "Your turn comes after the arm plays";
+    let word = "";
     let mood = "";
     if (s.phase === "your_turn") {
       if (s.keys_down.length) word = `Listen to ${s.asked}…`;
@@ -252,7 +252,7 @@ export function startLive(stage) {
     } else if (s.phase === "playing" && goal !== null) {
       word = `Listen to ${s.asked}`;
     } else if (s.phase === "get_ready" && goal !== null) {
-      word = `Watch John sing ${s.asked}`;
+      word = "";
     } else if (s.phase === "feedback") {
       word = verdict(s.sung?.cents ?? null).word;
       mood = verdict(s.sung?.cents ?? null).tone === "ok" ? "good" : "off";
@@ -273,7 +273,7 @@ export function startLive(stage) {
       $("countdown-fill").style.width = `${(100 * left) / turn.seconds}%`;
       $("countdown-text").textContent = count;
       if (cents !== null && !heard.piano) setFeedback(word, mood ? `${mood} live` : "");
-      else setFeedback("Hold the note after the piano stops.", "");
+      else setFeedback("", "");
     } else if (s.phase === "feedback") {
       $("countdown-fill").style.width = "0%";
       $("countdown-text").textContent = "window closed";

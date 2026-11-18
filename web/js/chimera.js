@@ -4,8 +4,7 @@
 // (chimera/teacher.html, a build of github.com/jamesondh/chimera-vocal-synth, MIT) appears half see-through
 // over the pitch lane and sings it on its name, do re mi fa sol la, his pitch drawn on the lane. Then he
 // fades away, the arm plays the note again and it's your turn, with only the lane. He runs in an iframe
-// and is told what to do with postMessage. Browsers only let him make a sound after a click inside it,
-// so he shows a Start button until then. Off with ?chimera=0.
+// and is told what to do with postMessage. Off with ?chimera=0.
 // In band mode (state.mode "band": the arm loops a riff, you play over it) he stays on screen and sings
 // each note the arm presses, as the backing vocal.
 
@@ -17,9 +16,11 @@ const SHOWN = new Set(["get_ready"]);
 export const SING_SECONDS = 1.6;
 export const BAND_SECONDS = 0.5; // band mode: John's backing note for each key the arm presses
 
-/** Band mode: the note John sings for a key press the page has not seen yet (MIDI note), or null. */
+const ALONG = new Set(["band", "warmup"]); // John sings along with the arm, key by key
+
+/** Band mode and the warm-up: the note John sings for a key press the page has not seen yet, or null. */
 export function bandNote(was, now) {
-  if (now.mode !== "band" || !now.press || now.press.t === was?.press?.t) return null;
+  if (!ALONG.has(now.mode) || !now.press || now.press.t === was?.press?.t) return null;
   return KEYS.find((entry) => entry.midi % 12 === now.press.note % 12) ?? null;
 }
 
@@ -64,8 +65,20 @@ export function startChimera(onPitch = () => {}) {
   frame.src = `chimera/teacher.html${body ? `?body=${encodeURIComponent(body)}` : ""}`;
   box.hidden = false;
 
+  // Browsers play no sound until the page has been clicked or a key pressed. John tries to start by himself;
+  // if that is refused, the first click or key anywhere on this page starts him, and a small note says so.
+  const hint = document.getElementById("live-john");
+  const nudge = () => {
+    if (!started) frame.contentWindow?.__coachNudge?.();
+  };
+  window.addEventListener("pointerdown", nudge, true);
+  window.addEventListener("keydown", nudge, true);
+
   let ready = false;
   let started = false;
+  setTimeout(() => {
+    if (hint && !started) hint.hidden = false;
+  }, 1500);
   let showing = false;
   let sungFor = null;
   const queue = []; // messages sent before the head loaded
@@ -73,9 +86,23 @@ export function startChimera(onPitch = () => {}) {
     if (ready) frame.contentWindow?.postMessage(message, location.origin);
     else queue.push(message);
   };
+  let awake = true;
+  let nap = 0;
   const show = () => {
-    box.dataset.show = String(showing || !started);
+    const on = showing;
+    box.dataset.show = String(on);
     box.dataset.started = String(started);
+    if (hint && started) hint.hidden = true;
+    // Hidden, he sleeps: no drawing, no voice engine. He costs the rig's computer nothing between notes.
+    clearTimeout(nap);
+    if (on && !awake) post({ type: "wake" });
+    if (on) awake = true;
+    else if (awake) {
+      nap = setTimeout(() => {
+        awake = false;
+        post({ type: "sleep" });
+      }, 800);
+    }
   };
 
   window.addEventListener("message", (event) => {
@@ -97,15 +124,18 @@ export function startChimera(onPitch = () => {}) {
 
   /** Follow the rig: called with each new state, and the verdict's tone in feedback. */
   return function follow(was, now, tone) {
-    showing = SHOWN.has(now.phase) || now.mode === "band";
+    showing = SHOWN.has(now.phase) || ALONG.has(now.mode);
+    box.dataset.card = String(ALONG.has(now.mode));
     show();
     const step = coachStep(sungFor, now);
     sungFor = step.sungFor;
     const backing = bandNote(was, now);
     if (backing) {
       post({ type: "sing", midi: backing.midi, seconds: BAND_SECONDS, name: backing.word, backing: true });
-    } else if (now.mode === "band") {
-      if (was?.mode !== "band") post({ type: "idle", text: "Band mode. I do backing vocals. I've always been a background throat." });
+    } else if (ALONG.has(now.mode)) {
+      if (was?.mode !== now.mode) {
+        post({ type: "idle", text: now.mode === "band" ? "Band mode. I do backing vocals. I've always been a background throat." : "Warm-up. Sing along with me. Nobody is judging. I can't even hear you." });
+      }
     } else if (step.sing) {
       post({ type: "sing", midi: BY_WORD[step.sing].midi, seconds: SING_SECONDS, name: step.sing });
     } else if (now.phase !== was?.phase) {

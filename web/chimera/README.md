@@ -15,7 +15,10 @@ The page sends `postMessage` to the frame (same origin only):
 
 It answers `{ source: "chimera-coach", type: "ready" | "started" | "singing" | "sang" | "needs-click" }`,
 and `{ type: "pitch", f0 }` 20 times a second while he sings.
-Browsers allow sound only after a click inside the frame, so it shows "Start John" until then.
+Also `{ type: "sleep" }` and `{ type: "wake" }`. Browsers allow sound only once the page has been clicked or
+a key pressed: he tries to start by himself, and otherwise the first click or key anywhere on the page
+starts him (the page shows "Click anywhere for John's voice" until then). To never need it, allow sound
+or autoplay for `localhost:8770` in the browser's site settings.
 Page URL options: `?chimera=0` turns the coach off, `?chimera_body=female` picks the voice.
 
 ## Rebuilding
@@ -31,25 +34,31 @@ npx vite build --config vite.teacher.config.ts
 rsync -a --delete --exclude data --exclude README.md --exclude LICENSE --exclude source dist-teacher/ /path/to/web/chimera/
 ```
 
-## Beginner mode: John shows first
+## The lesson: John shows first
 
-With `keys_voice.py --beginner`, each note goes: the arm plays it; the display says "John sings mi. Watch."
-and John appears half see-through over the pitch lane and sings it on its name (do, re, mi, fa, sol, la,
-from exact IPA), his pitch drawn on the lane as a dashed line; then he fades away, the arm plays the
-note again and it's "Your turn: sing mi." with only the lane. He never sings in your turn, so the
-microphone never hears him. Without `--beginner` he stays hidden.
+Reachy asks if it is your first time. For beginners (the default) each note goes: the arm plays it; the
+display says "John sings mi. Watch." and John appears at the bottom left, half see-through over the pitch
+lane, and sings it on its name (do, re, mi, fa, sol, la, from exact IPA), his pitch drawn on the lane as
+a dashed line; he fades away; "Your turn: sing mi." and the arm plays the note again. He never sings in
+your turn, so the microphone never hears him. Say "I've sung before" or "skip John" to go straight to
+the notes, "I'm a beginner" to get him back; `keys_voice.py --direct` starts without him.
 
 The turn opens on the display as the arm starts your note, and your pitch is drawn from then on (grey
 while the piano also sounds). The pitch lane is on screen only for John's note, your turn and the
 verdict; a turn nobody closes (a teacher stopped with Ctrl+C) expires by itself.
 
-## Songs and band mode
+## Warm-up, songs and band mode
 
+- "Let's warm up": the arm goes up and down the six notes, John sings each key it presses, you sing
+  along. Nothing is judged. Reachy proposes it by itself, then the lesson.
 - `keys_voice.py --songs`: just chat and play. Reachy is a relaxed jukebox: "play largo", "play
   anything", "play stomp". No lessons unless you ask.
 - Band mode, in any mode: say "band mode" or "jam with me" (or "jam on largo"). The arm loops the
-  riff's first line four times as a backing track, John stays on screen and sings each key the arm
-  presses, and you play over it. Nothing is judged, and the teacher's microphone is closed meanwhile.
+  riff's first line four times as a backing track, John sings each key the arm presses, and you play
+  over it. Nothing is judged, and the teacher's microphone is closed meanwhile.
+
+Hidden, John sleeps: he is not drawn and his voice engine is suspended, so he costs the rig's computer
+nothing between notes.
 
 ## Sound on another speaker
 

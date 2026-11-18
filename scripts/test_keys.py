@@ -1064,6 +1064,15 @@ def test_voice_teacher_routes_requests_to_the_arm_and_the_pitch_check() -> None:
         assert "John, the singing head on the screen" in facts[0]
         assert facts[1] == "The user sang mi and was in tune. Tell them that, then: Well done."
 
+        # The warm-up: up and down the six notes, nothing recorded. A level said out loud sets John.
+        await teacher.on_event({"type": "session.output_transcript.delta", "delta": "Ok."})
+        arm.asked, sent[:], audio.sung = [], [], []
+        await user_says("I'm a beginner, let's warm up")
+        assert arm.asked == [keys_voice.WARMUP_NOTES] and teacher.show_s == keys_voice.JOHN_S
+        await teacher.on_event({"type": "session.output_transcript.delta", "delta": "Ok."})
+        await user_says("I have sung before, warm up again")
+        assert teacher.show_s == 0.0
+
         # Band mode: the arm loops the riff's first line; nothing is recorded or judged.
         await teacher.on_event({"type": "session.output_transcript.delta", "delta": "Ok."})
         arm.asked, sent[:], audio.sung = [], [], []
@@ -1088,6 +1097,11 @@ def test_voice_teacher_routes_requests_to_the_arm_and_the_pitch_check() -> None:
     assert understand("Just play some um, some anything").song == "largo"
     assert understand("play something by Beethoven").song == "ode"
     assert understand("jingle bells please").song == "jingle"
+    # The warm-up, and what the user says about their level.
+    assert understand("let's warm up first").kind == "warmup"
+    assert keys_voice.said_level("It's my first time, I'm a beginner") == "beginner"
+    assert keys_voice.said_level("I have sung before, skip John") == "direct"
+    assert keys_voice.said_level("play mi sol la") is None
     # Band mode: a jam over a riff, the default one or a named tune.
     assert (understand("let's do band mode").kind, understand("let's do band mode").song) == ("band", "stomp")
     assert understand("give me a backing track, I'll play guitar").kind == "band"

@@ -31,9 +31,9 @@ the buttons. `js/live.js` follows the events the rig streams:
 - While you sing: the listening window counts down, and your pitch is drawn live against the note.
 - What the robot hears (its spectrogram camera), the tune with right and wrong notes, and what you and
   the teacher said.
-- Beginner mode (experiment, `keys_voice.py --beginner`): after the arm, John, a 3D singing head, appears
-  over the pitch lane and sings the note on its name, then fades and the arm plays it again for your
-  turn. Click "Start John" once for sound. `?chimera=0` turns him off. See `chimera/README.md`.
+- John (experiment): for beginners a 3D singing head appears over the pitch lane after the arm and sings
+  the note on its name, then fades and the arm plays it again for your turn. Also a warm-up and band
+  mode. `?chimera=0` turns him off. See `chimera/README.md`.
 
 ```bash
 uv run --with-requirements scripts/requirements-keys.txt scripts/keys_ui.py --demo   # no rig needed
