@@ -22,8 +22,8 @@ Then open http://localhost:8765. It must be served, not opened as a file, becaus
 
 ## What it is not
 
-- **Not a physics simulator.** The arm is a simplified stand-in that follows a script. It cannot be
-  used to train or test a policy.
+- **Not a physics simulator.** The arm uses the official SO-101 meshes and joint frames, with
+  scripted visual inverse kinematics. It cannot be used to train or test a policy.
 - **No learned policy and no voice model.** The real robot runs SmolVLA and a voice agent.
 - **Not connected to the real arm.** It only sees what the MIDI keyboard and the microphone tell it.
 
@@ -46,3 +46,7 @@ The pitch code in `js/pitch.js` is a port of `sung_pitch` and `judge_pitch` in
 Pages must be switched on once: repository Settings, Pages, Source: GitHub Actions.
 
 three.js 0.170 is vendored in `vendor/` under the MIT license (`vendor/THREE-LICENSE`).
+The official SO-101 URDF and STL meshes are vendored under Apache-2.0; see
+[`vendor/so101/README.md`](vendor/so101/README.md) for pinned sources and attribution.
+All scene assets, including labels and Reachy's procedural geometry, work without external
+network access when served locally. No build step is required.

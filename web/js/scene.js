@@ -1,84 +1,94 @@
-// The 3D picture: an SO-101-like arm behind a 25-key MIDI keyboard, with a Reachy Mini watching.
-// Units are metres. The arm is a simplified stand-in, not the real geometry: a turning base, two
-// links and a finger that always points straight down, placed by simple inverse kinematics.
-
+// A small, offline rehearsal stage. Metres throughout; the SO-101's original
+// URDF frames and STL parts are retained (see vendor/so101/README.md).
 import * as THREE from "three";
 import { OrbitControls } from "../vendor/OrbitControls.js";
-
+import { STLLoader } from "../vendor/STLLoader.js";
+import { RoundedBoxGeometry } from "../vendor/RoundedBoxGeometry.js";
+import { RoomEnvironment } from "../vendor/RoomEnvironment.js";
 import { keyByNumber } from "./songs.js";
 
-const WHITE_W = 0.0235; // width of a white key
-const KEY_TOP = 0.045; // height of the white keys above the desk
-const FIRST_MIDI = 48; // C3, the lowest of the 25 keys
-const LAST_MIDI = 72; // C5
-const CENTRE_WHITE = 10; // the six sticker keys (C4 to A4) are centred on x = 0
-const IS_BLACK = [false, true, false, true, false, false, true, false, true, false, true, false];
-
-const BASE = new THREE.Vector3(0, 0, -0.19); // where the arm stands
-const SHOULDER_H = 0.105;
-const UPPER = 0.12;
-const FORE = 0.14;
-const FINGER = 0.085;
-const PRESS_Z = 0.015; // where along the key the finger lands
-const HOVER = 0.03;
-const DIP = 0.007; // how far a key goes down
-
-const COLORS = {
-  white: 0xf5f3ee,
-  black: 0x1b1d22,
-  down: 0x4fd1a5,
-  target: 0xffdf8a,
-  body: 0x2a2d35,
-  link: 0xf0efe9,
-  servo: 0x22252c,
-  accent: 0xff8a3d,
-  desk: 0x14161b,
-};
-
-const easeInOut = (t) => (t < 0.5 ? 2 * t * t : 1 - (-2 * t + 2) ** 2 / 2);
+const WHITE_W = 0.0235;
+const KEY_TOP = 0.045;
+const KEY_BACK = -0.052;
+const PRESS_Z = 0.025;
+const DIP = 0.006;
+const HOVER = 0.035;
+const BLACK = [false, true, false, true, false, false, true, false, true, false, true, false];
+const ARM_JOINTS = ["shoulder_pan", "shoulder_lift", "elbow_flex", "wrist_flex", "wrist_roll"];
+// The silicone contact pad extends just beyond the fixed jaw's original mesh.
+const TIP_LOCAL = new THREE.Vector3(-0.0079, -0.000218, -0.112);
+const COLORS = { ivory: 0xfffbec, black: 0x242723, arm: 0x78883c, green: 0xb5d99c };
+const smooth = (t) => t * t * (3 - 2 * t);
+const clamp = THREE.MathUtils.clamp;
 const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+const material = (color, options = {}) => new THREE.MeshStandardMaterial({ color, roughness: 0.42, ...options });
 
-function box(w, h, d, color, options = {}) {
-  const mesh = new THREE.Mesh(
-    new THREE.BoxGeometry(w, h, d),
-    new THREE.MeshStandardMaterial({ color, roughness: 0.6, metalness: 0.05, ...options }),
-  );
-  mesh.castShadow = mesh.receiveShadow = true;
-  return mesh;
+function mesh(geometry, finish) {
+  const object = new THREE.Mesh(geometry, finish);
+  object.castShadow = object.receiveShadow = true;
+  return object;
 }
-
-function cylinder(radius, height, color, options = {}) {
-  const mesh = new THREE.Mesh(
-    new THREE.CylinderGeometry(radius, radius, height, 32),
-    new THREE.MeshStandardMaterial({ color, roughness: 0.6, metalness: 0.05, ...options }),
-  );
-  mesh.castShadow = mesh.receiveShadow = true;
-  return mesh;
+function rounded(w, h, d, finish, radius = 0.003, segments = 3) {
+  return mesh(new RoundedBoxGeometry(w, h, d, segments, radius), finish);
 }
-
-/** A small round sticker with a number and a word, lying flat on a key. */
-function sticker(number, word) {
+function cylinder(radius, height, finish, top = radius) {
+  return mesh(new THREE.CylinderGeometry(top, radius, height, 40), finish);
+}
+function place(parent, object, x, y, z) {
+  object.position.set(x, y, z);
+  parent.add(object);
+  return object;
+}
+function tube(points, radius, finish) {
+  return mesh(new THREE.TubeGeometry(new THREE.CatmullRomCurve3(points.map((p) => new THREE.Vector3(...p))), 32, radius, 8, false), finish);
+}
+function texture(draw, width = 512, height = 256) {
   const canvas = document.createElement("canvas");
-  canvas.width = canvas.height = 128;
-  const ctx = canvas.getContext("2d");
-  ctx.fillStyle = "#ffd166";
-  ctx.beginPath();
-  ctx.arc(64, 64, 60, 0, 2 * Math.PI);
-  ctx.fill();
-  ctx.fillStyle = "#1b1d22";
-  ctx.textAlign = "center";
-  ctx.font = "bold 62px system-ui, sans-serif";
-  ctx.fillText(String(number), 64, 70);
-  ctx.font = "bold 30px system-ui, sans-serif";
-  ctx.fillText(word, 64, 104);
-  const texture = new THREE.CanvasTexture(canvas);
-  texture.colorSpace = THREE.SRGBColorSpace;
-  const mesh = new THREE.Mesh(
-    new THREE.CircleGeometry(0.0095, 32),
-    new THREE.MeshBasicMaterial({ map: texture, transparent: true }),
-  );
-  mesh.rotation.x = -Math.PI / 2;
-  return mesh;
+  canvas.width = width;
+  canvas.height = height;
+  draw(canvas.getContext("2d"), width, height);
+  const map = new THREE.CanvasTexture(canvas);
+  map.colorSpace = THREE.SRGBColorSpace;
+  map.anisotropy = 4;
+  return map;
+}
+function decal(map, width, depth) {
+  const object = new THREE.Mesh(new THREE.PlaneGeometry(width, depth), new THREE.MeshBasicMaterial({ map, transparent: true, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -2 }));
+  object.rotation.x = -Math.PI / 2;
+  return object;
+}
+function label(text, width, depth, color = "#b8b9b1") {
+  return decal(texture((ctx, w, h) => {
+    ctx.fillStyle = color;
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.font = "600 44px monospace";
+    ctx.fillText(text, w / 2, h / 2);
+  }, 1024, 128), width, depth);
+}
+function origin(element) {
+  const numbers = (name) => (element?.getAttribute(name) || "0 0 0").split(/\s+/).map(Number);
+  return new THREE.Matrix4().makeRotationFromEuler(new THREE.Euler(...numbers("rpy"), "ZYX")).setPosition(...numbers("xyz"));
+}
+
+// Small damped least-squares system for the four positioning joints. The roll
+// stays fixed so the narrow jaw approaches each white key in the same attitude.
+function linearSolve(a, b) {
+  const rows = a.map((row, i) => [...row, b[i]]);
+  const n = b.length;
+  for (let c = 0; c < n; c++) {
+    let pivot = c;
+    for (let r = c + 1; r < n; r++) if (Math.abs(rows[r][c]) > Math.abs(rows[pivot][c])) pivot = r;
+    [rows[c], rows[pivot]] = [rows[pivot], rows[c]];
+    const divisor = rows[c][c];
+    for (let k = c; k <= n; k++) rows[c][k] /= divisor;
+    for (let r = 0; r < n; r++) {
+      if (r === c) continue;
+      const factor = rows[r][c];
+      for (let k = c; k <= n; k++) rows[r][k] -= factor * rows[c][k];
+    }
+  }
+  return rows.map((row) => row[n]);
 }
 
 export class Stage {
@@ -88,330 +98,404 @@ export class Stage {
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     this.renderer.shadowMap.enabled = true;
     this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
-
+    this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    this.renderer.toneMappingExposure = 1.18;
     this.scene = new THREE.Scene();
-    this.camera = new THREE.PerspectiveCamera(34, 1, 0.01, 10);
-    this.camera.position.set(-0.22, 0.38, 0.63);
+    this.scene.background = new THREE.Color(0xfaf7ee);
+    this.scene.fog = new THREE.Fog(0xfaf7ee, 1.3, 3.5);
+    this.camera = new THREE.PerspectiveCamera(34, 1, 0.01, 8);
     this.controls = new OrbitControls(this.camera, canvas);
-    this.controls.target.set(0.02, 0.05, -0.05);
     this.controls.enableDamping = true;
     this.controls.enablePan = false;
-    this.controls.minDistance = 0.35;
-    this.controls.maxDistance = 1.2;
-    this.controls.maxPolarAngle = Math.PI / 2 - 0.05;
-
-    this.keys = new Map(); // midi -> { mesh, restY, baseColor, downs, target }
+    this.controls.minDistance = 0.42;
+    this.controls.maxDistance = 2.8;
+    this.controls.minPolarAngle = 0.30;
+    this.controls.maxPolarAngle = Math.PI / 2 - 0.08;
+    this.controls.target.set(-0.025, 0.105, 0.035);
+    this.keys = new Map();
     this.tweens = [];
-    this.tip = new THREE.Vector3(0, KEY_TOP + 0.09, -0.02); // where the fingertip is
+    this.tip = new THREE.Vector3(-0.012, KEY_TOP + HOVER, PRESS_Z);
     this.chain = Promise.resolve();
     this.queued = 0;
     this.target = null;
-
+    this.mood = { wiggle: 0, tilt: 0 };
+    this.reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    this.addCaption();
     this.addLights();
     this.addDesk();
     this.addKeyboard();
-    this.addArm();
     this.addReachy();
-    this.solveArm();
-
-    new ResizeObserver(() => this.resize()).observe(canvas.parentElement);
+    this.ready = this.addArm().then(() => {
+      this.solveArm(60);
+      this.status.textContent = "Ready to play";
+      this.status.dataset.ready = "true";
+    }).catch((error) => {
+      this.assetError = error;
+      this.status.textContent = "Robot could not load. Refresh to retry.";
+      this.status.dataset.ready = "error";
+    });
+    this.resizeObserver = new ResizeObserver(() => this.resize());
+    this.resizeObserver.observe(canvas.parentElement);
     this.resize();
     this.clock = new THREE.Clock();
     this.renderer.setAnimationLoop(() => this.frame());
   }
 
-  // ------------------------------------------------------------------------------------ building
+  addCaption() {
+    const caption = document.createElement("div");
+    caption.className = "stage-caption";
+    caption.innerHTML = '<div><span class="stage-eyebrow">A LITTLE HUMAN–ROBOT HARMONY</span><p>Make a little<br>music.</p></div><span class="stage-status" role="status">Loading robot…</span>';
+    this.canvas.parentElement.append(caption);
+    this.status = caption.querySelector(".stage-status");
+    const legend = document.createElement("div");
+    legend.className = "stage-legend";
+    legend.innerHTML = '<span><i></i> SO-101</span><span><i></i> Reachy Mini</span><span>25 keys / C3–C5</span>';
+    this.canvas.parentElement.append(legend);
+  }
 
   addLights() {
-    this.scene.add(new THREE.HemisphereLight(0xffffff, 0x30343c, 1.1));
-    const sun = new THREE.DirectionalLight(0xffffff, 2.2);
-    sun.position.set(0.35, 0.7, 0.4);
-    sun.castShadow = true;
-    sun.shadow.mapSize.set(2048, 2048);
-    Object.assign(sun.shadow.camera, { left: -0.6, right: 0.6, top: 0.6, bottom: -0.6, near: 0.1, far: 2 });
-    sun.shadow.bias = -0.0005;
-    this.scene.add(sun);
+    const pmrem = new THREE.PMREMGenerator(this.renderer);
+    const room = new RoomEnvironment();
+    this.environment = pmrem.fromScene(room, 0.04);
+    this.scene.environment = this.environment.texture;
+    this.scene.environmentIntensity = 0.35;
+    room.dispose();
+    pmrem.dispose();
+    this.scene.add(new THREE.HemisphereLight(0xfff8e8, 0xc8b68c, 1.7));
+    const key = new THREE.DirectionalLight(0xfff3d4, 3.0);
+    key.position.set(-0.35, 0.85, 0.45);
+    key.castShadow = true;
+    key.shadow.mapSize.set(2048, 2048);
+    Object.assign(key.shadow.camera, { left: -0.6, right: 0.6, top: 0.6, bottom: -0.6, near: 0.1, far: 2 });
+    key.shadow.normalBias = 0.00065;
+    key.shadow.bias = -0.00012;
+    key.shadow.radius = 3;
+    this.scene.add(key);
+    const rim = new THREE.DirectionalLight(0xffffff, 1.3);
+    rim.position.set(0.4, 0.5, -0.4);
+    this.scene.add(rim);
+    const fill = new THREE.DirectionalLight(0xffffff, 0.35);
+    fill.position.set(0.2, 0.15, 0.7);
+    this.scene.add(fill);
   }
 
   addDesk() {
-    const desk = new THREE.Mesh(
-      new THREE.CircleGeometry(0.62, 64),
-      new THREE.MeshStandardMaterial({ color: COLORS.desk, roughness: 0.9 }),
-    );
-    desk.rotation.x = -Math.PI / 2;
-    desk.receiveShadow = true;
-    this.scene.add(desk);
+    // A seamless cream surface with only the robots' shadows visible. This
+    // keeps the scene continuous with the page instead of inside a 3D box.
+    const floor = mesh(new THREE.PlaneGeometry(200, 200), new THREE.ShadowMaterial({ color: 0x79714d, opacity: 0.24 }));
+    floor.rotation.x = -Math.PI / 2;
+    floor.position.y = 0;
+    this.scene.add(floor);
+    // Soft rubber mounting plate under the real CAD base.
+    place(this.scene, rounded(0.12, 0.006, 0.11, material(0x111614), 0.008), 0, 0.003, 0.24);
   }
 
-  whiteX(index) {
-    return (index + 0.5 - CENTRE_WHITE) * WHITE_W;
-  }
+  whiteX(index) { return (index + 0.5 - 10) * WHITE_W; }
 
   addKeyboard() {
-    const left = this.whiteX(0) - WHITE_W / 2 - 0.012;
-    const right = this.whiteX(14) + WHITE_W / 2 + 0.012;
-    const width = right - left;
-    const centre = (left + right) / 2;
-
-    const tray = box(width, 0.03, 0.175, COLORS.body);
-    tray.position.set(centre, 0.015, -0.0275);
-    this.scene.add(tray);
-    const strip = box(width, 0.02, 0.058, 0x343842);
-    strip.position.set(centre, 0.04, -0.084);
-    this.scene.add(strip);
-    for (let i = 0; i < 8; i++) {
-      const knob = cylinder(0.0075, 0.012, 0xd8d5cc);
-      knob.position.set(centre - 0.02 + i * 0.022, 0.056, -0.092);
-      this.scene.add(knob);
+    const centre = this.whiteX(7);
+    const width = 15 * WHITE_W + 0.035;
+    const dark = material(0x1a1e20, { metalness: 0.35, roughness: 0.35 });
+    const edge = material(0x343939, { metalness: 0.45, roughness: 0.3 });
+    place(this.scene, rounded(width, 0.034, 0.188, dark, 0.009), centre, 0.021, -0.028);
+    place(this.scene, rounded(width - 0.007, 0.017, 0.062, edge, 0.003), centre, 0.045, -0.088);
+    for (const x of [centre - width / 2 + 0.005, centre + width / 2 - 0.005]) {
+      place(this.scene, rounded(0.01, 0.043, 0.179, dark, 0.004), x, 0.025, -0.027);
+      for (const z of [-0.107, 0.052]) place(this.scene, cylinder(0.0015, 0.0005, material(0x7d8582, { metalness: 0.8 })), x, 0.047, z);
+    }
+    place(this.scene, label("P I A N O  /  2 5", 0.085, 0.008), centre + 0.114, 0.054, -0.098);
+    const screen = rounded(0.043, 0.001, 0.022, material(0x111a18), 0.002);
+    place(this.scene, screen, centre + 0.005, 0.055, -0.087);
+    const display = texture((ctx, w, h) => {
+      ctx.fillStyle = "#121e1c"; ctx.fillRect(0, 0, w, h);
+      ctx.fillStyle = "#a4d4c3"; ctx.font = "48px monospace"; ctx.fillText("01  PIANO", 24, 76);
+      ctx.fillStyle = "#557c6f"; ctx.font = "26px monospace"; ctx.fillText("OCT 0     MIDI", 24, 122);
+    }, 400, 150);
+    place(this.scene, decal(display, 0.038, 0.015), centre + 0.005, 0.0556, -0.087);
+    for (let i = 0; i < 4; i++) {
+      const x = centre - 0.14 + i * 0.026;
+      place(this.scene, rounded(0.021, 0.004, 0.02, material(i === 0 ? 0xd6974e : 0x5b625e, { roughness: 0.7 }), 0.003), x, 0.055, -0.083);
+      place(this.scene, label(String(i + 1), 0.004, 0.004, "#d8d9ce"), x, 0.0573, -0.083);
     }
     for (let i = 0; i < 4; i++) {
-      const pad = box(0.022, 0.004, 0.022, 0x596070, { emissive: 0x1d2a3a });
-      pad.position.set(left + 0.03 + i * 0.027, 0.052, -0.086);
-      this.scene.add(pad);
+      const x = centre + 0.049 + i * 0.026;
+      place(this.scene, cylinder(0.007, 0.009, material(0x0c1112, { roughness: 0.6 }), 0.006), x, 0.058, -0.077);
+      place(this.scene, rounded(0.001, 0.0005, 0.004, material(0xd4cdbb), 0.0002), x, 0.0627, -0.08);
     }
-
     let white = 0;
-    for (let midi = FIRST_MIDI; midi <= LAST_MIDI; midi++) {
-      const black = IS_BLACK[midi % 12];
-      const mesh = black
-        ? box(0.013, 0.012, 0.06, COLORS.black, { roughness: 0.35 })
-        : box(WHITE_W - 0.0016, 0.015, 0.1, COLORS.white, { roughness: 0.35 });
-      const restY = black ? KEY_TOP + 0.004 : KEY_TOP - 0.0075;
-      mesh.position.set(black ? this.whiteX(white) - WHITE_W / 2 : this.whiteX(white), restY, black ? -0.02 : 0);
-      this.scene.add(mesh);
-      this.keys.set(midi, { mesh, restY, baseColor: black ? COLORS.black : COLORS.white, downs: 0 });
+    for (let midi = 48; midi <= 72; midi++) {
+      const black = BLACK[midi % 12];
+      const baseColor = black ? COLORS.black : COLORS.ivory;
+      const pivot = new THREE.Group();
+      pivot.position.set(black ? this.whiteX(white) - WHITE_W / 2 : this.whiteX(white), black ? KEY_TOP + 0.013 : KEY_TOP, KEY_BACK);
+      const key = rounded(black ? 0.0128 : WHITE_W - 0.0011, black ? 0.014 : 0.013, black ? 0.065 : 0.109, material(baseColor, { roughness: black ? 0.3 : 0.24 }), 0.0013);
+      place(pivot, key, 0, black ? -0.007 : -0.0065, black ? 0.0325 : 0.0545);
+      this.scene.add(pivot);
+      this.keys.set(midi, { mesh: key, pivot, black, baseColor, downs: 0, armDepth: 0, midiDepth: 0, depth: 0, target: false });
       if (!black) white++;
     }
-
     for (let number = 1; number <= 6; number++) {
       const { word, midi } = keyByNumber(number);
-      const label = sticker(number, word);
-      label.position.set(0, 0.0078, 0.036);
-      this.keys.get(midi).mesh.add(label);
+      const sticker = texture((ctx, w, h) => {
+        ctx.fillStyle = "#eec77c";
+        ctx.beginPath(); ctx.roundRect(8, 8, w - 16, h - 16, 35); ctx.fill();
+        ctx.strokeStyle = "#a57b36"; ctx.lineWidth = 2; ctx.stroke();
+        ctx.fillStyle = "#322a1c"; ctx.textAlign = "center";
+        ctx.font = "700 116px system-ui"; ctx.fillText(String(number), w / 2, 132);
+        ctx.font = "600 47px system-ui"; ctx.fillText(word, w / 2, 206);
+      }, 256, 256);
+      place(this.keys.get(midi).pivot, decal(sticker, 0.017, 0.018), 0, 0.0002, 0.091);
     }
+    // A USB lead, with a quiet curve off the back of the controller.
+    const cable = material(0x101411, { roughness: 0.8 });
+    this.scene.add(tube([[centre - 0.13, 0.024, -0.12], [centre - 0.15, 0.012, -0.17], [centre - 0.22, 0.004, -0.21], [centre - 0.26, 0.004, -0.31]], 0.002, cable));
   }
 
-  addArm() {
-    const base = cylinder(0.042, 0.03, COLORS.servo);
-    base.position.copy(BASE).setY(0.015);
-    this.scene.add(base);
-
-    this.yaw = new THREE.Group(); // turns left and right
-    this.yaw.position.copy(BASE);
-    this.scene.add(this.yaw);
-    const column = box(0.05, SHOULDER_H - 0.03, 0.045, COLORS.link);
-    column.position.y = 0.03 + (SHOULDER_H - 0.03) / 2;
-    this.yaw.add(column);
-
-    const joint = () => {
-      const servo = cylinder(0.02, 0.058, COLORS.servo);
-      servo.rotation.z = Math.PI / 2;
-      return servo;
+  async addArm() {
+    const url = new URL("../vendor/so101/so101.urdf", import.meta.url);
+    const response = await fetch(url);
+    if (!response.ok) throw new Error(`SO-101: ${response.status}`);
+    const xml = new DOMParser().parseFromString(await response.text(), "text/xml");
+    const robot = xml.querySelector("robot");
+    if (!robot) throw new Error("Invalid SO-101 URDF");
+    const loader = new STLLoader();
+    const geometries = new Map();
+    for (const element of robot.querySelectorAll("visual mesh")) {
+      const filename = element.getAttribute("filename");
+      if (!geometries.has(filename)) geometries.set(filename, loader.loadAsync(new URL(filename, url).href));
+    }
+    await Promise.all(geometries.values());
+    const finishes = {
+      "3d_printed": material(COLORS.arm, { roughness: 0.72, metalness: 0 }),
+      sts3215: material(0x202625, { roughness: 0.42, metalness: 0.25 }),
     };
-    const link = (length) => {
-      const mesh = box(0.036, 0.03, length, COLORS.link);
-      mesh.position.z = length / 2;
-      return mesh;
-    };
-
-    this.shoulder = new THREE.Group(); // lifts the upper arm
-    this.shoulder.position.y = SHOULDER_H;
-    this.shoulder.add(joint(), link(UPPER));
-    this.yaw.add(this.shoulder);
-
-    this.elbow = new THREE.Group();
-    this.elbow.position.z = UPPER;
-    this.elbow.add(joint(), link(FORE));
-    this.shoulder.add(this.elbow);
-
-    this.wrist = new THREE.Group(); // keeps the finger pointing down
-    this.wrist.position.z = FORE;
-    const hand = box(0.04, 0.034, 0.045, COLORS.servo);
-    hand.position.z = 0.02;
-    const finger = box(0.014, 0.014, FINGER - 0.04, COLORS.accent);
-    finger.position.z = 0.04 + (FINGER - 0.04) / 2;
-    this.wrist.add(joint(), hand, finger);
-    this.elbow.add(this.wrist);
+    this.arm = new THREE.Group();
+    this.arm.matrixAutoUpdate = false;
+    // Convert URDF Z-up into Three Y-up, facing the keyboard.
+    this.arm.matrix.makeRotationY(Math.PI / 2).multiply(new THREE.Matrix4().makeRotationX(-Math.PI / 2)).setPosition(0, 0.008, 0.25);
+    const links = new Map();
+    for (const link of robot.querySelectorAll(":scope > link")) {
+      const group = new THREE.Group();
+      group.name = link.getAttribute("name");
+      for (const visual of link.querySelectorAll(":scope > visual")) {
+        const filename = visual.querySelector("mesh").getAttribute("filename");
+        const part = mesh(await geometries.get(filename), finishes[visual.querySelector("material").getAttribute("name")]);
+        part.applyMatrix4(origin(visual.querySelector("origin")));
+        group.add(part);
+      }
+      links.set(group.name, group);
+    }
+    this.joints = new Map();
+    for (const joint of robot.querySelectorAll(":scope > joint")) {
+      const name = joint.getAttribute("name");
+      const frame = new THREE.Group();
+      frame.applyMatrix4(origin(joint.querySelector("origin")));
+      const rotation = new THREE.Group();
+      frame.add(rotation);
+      rotation.add(links.get(joint.querySelector("child").getAttribute("link")));
+      links.get(joint.querySelector("parent").getAttribute("link")).add(frame);
+      const limits = joint.querySelector("limit");
+      this.joints.set(name, { rotation, origin: origin(joint.querySelector("origin")), limits: limits ? [+limits.getAttribute("lower"), +limits.getAttribute("upper")] : [0, 0] });
+    }
+    this.arm.add(links.get("base_link"));
+    this.scene.add(this.arm);
+    this.armChain = ARM_JOINTS.map((name) => this.joints.get(name));
+    this.angles = [0, -0.2, 0.4, 1.2, Math.PI / 2];
+    this.joints.get("gripper").rotation.rotation.z = this.joints.get("gripper").limits[0];
+    this.contactPad = mesh(new THREE.SphereGeometry(0.004, 20, 12), material(0x323632, { roughness: 0.92 }));
+    this.contactPad.position.copy(TIP_LOCAL).z += 0.004;
+    links.get("gripper_link").add(this.contactPad);
+    // A real scene-graph point, also useful for checking fingertip/key contact.
+    this.fingertip = new THREE.Object3D();
+    this.fingertip.position.copy(TIP_LOCAL);
+    links.get("gripper_link").add(this.fingertip);
   }
 
   addReachy() {
+    const shell = material(0xf0eee7, { roughness: 0.28 });
+    const seam = material(0xb7bab2, { roughness: 0.42 });
+    const black = material(0x121616, { roughness: 0.25, metalness: 0.18 });
+    const metal = material(0xa0aaa5, { roughness: 0.25, metalness: 0.85 });
     this.reachy = new THREE.Group();
-    this.reachy.position.set(0.25, 0, 0.04);
-    this.reachy.lookAt(0, 0, -0.02);
-    const body = cylinder(0.045, 0.085, 0xf4f4f1);
-    body.position.y = 0.0425;
-    this.reachy.add(body);
-
-    this.head = new THREE.Group();
-    this.head.position.y = 0.135;
-    const skull = new THREE.Mesh(
-      new THREE.SphereGeometry(0.055, 48, 32),
-      new THREE.MeshStandardMaterial({ color: 0xf4f4f1, roughness: 0.5 }),
-    );
-    skull.scale.set(1.15, 0.8, 0.95);
-    skull.castShadow = true;
-    this.head.add(skull);
+    this.reachy.position.set(0.31, 0, 0.005);
+    this.reachy.rotation.y = -0.72;
+    this.scene.add(this.reachy);
+    place(this.reachy, cylinder(0.049, 0.011, black), 0, 0.006, 0);
+    const profile = new THREE.SplineCurve([
+      [0, 0.011], [0.043, 0.011], [0.051, 0.015], [0.057, 0.027], [0.059, 0.054],
+      [0.057, 0.079], [0.051, 0.100], [0.040, 0.117], [0.026, 0.126], [0.021, 0.125],
+      [0.026, 0.112], [0.035, 0.094], [0, 0.094],
+    ].map(([x, y]) => new THREE.Vector2(x, y)));
+    const body = new THREE.LatheGeometry(profile.getPoints(100), 64);
+    const torso = mesh(body, shell);
+    torso.scale.z = 0.85;
+    this.reachy.add(torso);
+    const bodySeam = mesh(new THREE.TorusGeometry(0.0585, 0.00045, 8, 80), seam);
+    bodySeam.rotation.x = Math.PI / 2;
+    bodySeam.scale.y = 0.85;
+    place(this.reachy, bodySeam, 0, 0.044, 0);
     for (const side of [-1, 1]) {
-      const eye = cylinder(0.014, 0.012, 0x15171b, { roughness: 0.2 });
-      eye.rotation.x = Math.PI / 2;
-      eye.position.set(side * 0.026, 0.004, 0.05);
-      this.head.add(eye);
+      this.reachy.add(tube([[side * 0.027, 0.097, -0.003], [side * 0.025, 0.123, -0.002], [side * 0.016, 0.144, 0]], 0.0034, metal));
+      const joint = cylinder(0.006, 0.008, black);
+      joint.rotation.x = Math.PI / 2;
+      place(this.reachy, joint, side * 0.016, 0.142, 0);
     }
+    this.reachy.add(tube([[-0.025, 0.103, 0], [-0.031, 0.127, 0], [-0.019, 0.145, 0.008]], 0.0012, material(0xa84d36)));
+    this.head = new THREE.Group();
+    this.head.position.set(0, 0.17, 0.003);
+    this.reachy.add(this.head);
+    place(this.head, rounded(0.131, 0.084, 0.077, seam, 0.026, 7), 0, 0, -0.001);
+    place(this.head, rounded(0.133, 0.085, 0.057, shell, 0.025, 7), 0, 0.001, 0.011);
+    place(this.head, rounded(0.127, 0.08, 0.025, shell, 0.021, 7), 0, 0, -0.028);
+    place(this.head, rounded(0.07, 0.006, 0.003, black, 0.002), 0, -0.002, 0.041);
+    for (const [side, radius] of [[-1, 0.0215], [1, 0.017]]) {
+      const eye = new THREE.Group();
+      eye.rotation.x = Math.PI / 2;
+      place(this.head, eye, side * 0.032, -0.001, 0.042);
+      place(eye, cylinder(radius, 0.006, black), 0, 0, 0);
+      place(eye, cylinder(radius * 0.84, 0.002, metal), 0, 0.0035, 0);
+      place(eye, cylinder(radius * 0.78, 0.003, black), 0, 0.005, 0);
+      const lens = mesh(new THREE.SphereGeometry(radius * 0.64, 32, 20), new THREE.MeshPhysicalMaterial({ color: 0x0b161a, roughness: 0.1, metalness: 0.4, clearcoat: 1, clearcoatRoughness: 0.08 }));
+      lens.scale.y = 0.3;
+      place(eye, lens, 0, 0.007, 0);
+    }
+    // Slender aerials with their characteristic exposed helical springs.
     this.antennas = [-1, 1].map((side) => {
       const antenna = new THREE.Group();
-      antenna.position.set(side * 0.038, 0.035, -0.005);
-      const stem = cylinder(0.0022, 0.07, 0x15171b);
-      stem.position.y = 0.035;
-      const ball = new THREE.Mesh(
-        new THREE.SphereGeometry(0.007, 16, 12),
-        new THREE.MeshStandardMaterial({ color: COLORS.accent }),
-      );
-      ball.position.y = 0.07;
-      antenna.add(stem, ball);
-      antenna.rotation.z = -side * 0.25;
+      place(this.head, antenna, side * 0.055, 0.029, -0.013);
+      place(antenna, cylinder(0.0043, 0.013, shell), 0, 0.004, 0);
+      place(antenna, cylinder(0.0011, 0.102, black), 0, 0.056, 0);
+      const points = [];
+      for (let i = 0; i <= 160; i++) {
+        const phase = i / 160 * Math.PI * 16;
+        points.push([Math.cos(phase) * 0.0025, 0.013 + i / 160 * 0.021, Math.sin(phase) * 0.0025]);
+      }
+      antenna.add(tube(points, 0.00065, metal));
+      place(antenna, cylinder(0.0018, 0.02, black), 0, 0.105, 0);
+      antenna.rotation.z = -side * 0.17;
       antenna.userData.rest = antenna.rotation.z;
-      this.head.add(antenna);
       return antenna;
     });
-    this.head.rotation.x = 0.25; // looking down at the keys
-    this.reachy.add(this.head);
-    this.scene.add(this.reachy);
-    this.mood = { wiggle: 0, tilt: 0 };
+    const badge = label("pollen", 0.023, 0.006, "#59635d");
+    badge.rotation.x = 0;
+    place(this.reachy, badge, 0, 0.063, 0.0503);
+    this.head.rotation.set(0.30, -0.35, -0.035);
   }
 
-  // ---------------------------------------------------------------------------------- arm motion
+  forward(angles) {
+    const matrix = this.arm.matrix.clone();
+    for (let i = 0; i < this.armChain.length; i++) matrix.multiply(this.armChain[i].origin).multiply(new THREE.Matrix4().makeRotationZ(angles[i]));
+    const point = TIP_LOCAL.clone().applyMatrix4(matrix);
+    const direction = new THREE.Vector3(0, 0, -1).transformDirection(matrix).multiplyScalar(0.10);
+    return [...point.toArray(), ...direction.toArray()];
+  }
 
-  /** Turn the joints so the fingertip is at this.tip, finger straight down. */
-  solveArm() {
-    const dx = this.tip.x - BASE.x;
-    const dz = this.tip.z - BASE.z;
-    const reach = Math.hypot(dx, dz);
-    const height = this.tip.y + FINGER - SHOULDER_H; // the wrist, seen from the shoulder
-    const distance = Math.min(Math.hypot(reach, height), UPPER + FORE - 1e-4);
-    const cosElbow = (distance ** 2 - UPPER ** 2 - FORE ** 2) / (2 * UPPER * FORE);
-    const bend = Math.acos(THREE.MathUtils.clamp(cosElbow, -1, 1));
-    const lift = Math.atan2(height, reach) + Math.atan2(FORE * Math.sin(bend), UPPER + FORE * Math.cos(bend));
-    this.yaw.rotation.y = Math.atan2(dx, dz);
-    this.shoulder.rotation.x = -lift;
-    this.elbow.rotation.x = bend;
-    this.wrist.rotation.x = Math.PI / 2 + (lift - bend);
+  solveArm(iterations = 10) {
+    if (!this.armChain) return;
+    const target = [...this.tip.toArray(), 0, -0.1, 0];
+    for (let iteration = 0; iteration < iterations; iteration++) {
+      const current = this.forward(this.angles);
+      const error = target.map((v, i) => v - current[i]);
+      if (Math.hypot(...error) < 0.000005) break;
+      const jacobian = this.angles.slice(0, 4).map((_, j) => {
+        const perturbed = this.angles.slice();
+        perturbed[j] += 0.0001;
+        return this.forward(perturbed).map((v, k) => (v - current[k]) / 0.0001);
+      });
+      const a = jacobian.map((u, i) => jacobian.map((v, j) => u.reduce((s, x, k) => s + x * v[k], 0) + (i === j ? 0.00001 : 0)));
+      const b = jacobian.map((u) => u.reduce((s, x, k) => s + x * error[k], 0));
+      linearSolve(a, b).forEach((step, i) => {
+        this.angles[i] = clamp(this.angles[i] + clamp(step, -0.18, 0.18), ...this.armChain[i].limits);
+      });
+    }
+    this.armChain.forEach((joint, i) => { joint.rotation.rotation.z = this.angles[i]; });
   }
 
   tween(ms, step) {
     return new Promise((resolve) => this.tweens.push({ start: performance.now(), ms, step, resolve }));
   }
-
   moveTip(to, ms) {
     const from = this.tip.clone();
     return this.tween(ms, (t) => {
-      this.tip.lerpVectors(from, to, easeInOut(t));
+      this.tip.lerpVectors(from, to, smooth(t));
       this.solveArm();
     });
   }
-
   keyPoint(number, lift = 0) {
-    const mesh = this.keys.get(keyByNumber(number).midi).mesh;
-    return new THREE.Vector3(mesh.position.x, KEY_TOP + lift, PRESS_Z);
+    const entry = this.keys.get(keyByNumber(number).midi);
+    entry.pivot.updateWorldMatrix(true, false);
+    return entry.pivot.localToWorld(new THREE.Vector3(0, 0.00025, PRESS_Z - KEY_BACK)).add(new THREE.Vector3(0, lift, 0));
   }
-
   async pressOnce(number, onDown, quick) {
-    const midi = keyByNumber(number).midi;
+    await this.ready;
+    if (this.assetError) return;
+    const entry = this.keys.get(keyByNumber(number).midi);
     const hover = this.keyPoint(number, HOVER);
-    const travel = this.tip.distanceTo(hover);
-    await this.moveTip(hover, quick ? 120 : 260 + 2200 * travel);
-    await this.moveTip(this.keyPoint(number, -DIP), quick ? 70 : 110);
-    this.keyDown(midi);
-    onDown?.();
-    await wait(quick ? 90 : 180);
-    this.keyUp(midi);
-    await this.moveTip(hover, quick ? 90 : 150);
+    // Lift clear of the black keys before moving sideways to the next note.
+    if (this.tip.y < KEY_TOP + HOVER - 0.002) await this.moveTip(this.tip.clone().setY(KEY_TOP + HOVER), 90);
+    await this.moveTip(hover, quick ? 140 : 240 + 1100 * this.tip.distanceTo(hover));
+    await this.moveTip(this.keyPoint(number), quick ? 70 : 130);
+    this.contactKey = number;
+    try {
+      await this.tween(quick ? 60 : 95, (t) => { entry.armDepth = smooth(t); });
+      onDown?.();
+      await wait(quick ? 85 : 170);
+    } finally {
+      await this.tween(quick ? 70 : 110, (t) => { entry.armDepth = 1 - smooth(t); });
+      this.contactKey = null;
+      await this.moveTip(this.keyPoint(number, HOVER), quick ? 100 : 170);
+    }
   }
-
-  /** The arm presses a sticker key (1 to 6). Presses queue up. `onDown` runs as the key lands. */
   pressKey(number, onDown) {
+    if (!Number.isInteger(number) || !keyByNumber(number)) return Promise.reject(new RangeError("Use a sticker number from 1 to 6"));
     this.queued++;
-    this.chain = this.chain.then(() => this.pressOnce(number, onDown, false)).finally(() => this.queued--);
+    const press = this.chain.catch(() => {}).then(() => this.pressOnce(number, onDown, false)).finally(() => { this.queued--; });
+    this.chain = press;
+    return press;
+  }
+  mirrorPress(number) {
+    if (this.busy || !Number.isInteger(number) || !keyByNumber(number)) return;
+    this.queued++;
+    this.chain = this.chain.catch(() => {}).then(() => this.pressOnce(number, null, true)).finally(() => { this.queued--; });
     return this.chain;
   }
-
-  /** The arm copies a press that happened on the real keyboard, if it is not already busy. */
-  mirrorPress(number) {
-    if (this.queued) return;
-    this.queued++;
-    this.chain = this.chain.then(() => this.pressOnce(number, null, true)).finally(() => this.queued--);
-  }
-
-  get busy() {
-    return this.queued > 0;
-  }
-
-  // ------------------------------------------------------------------------------------- keys
+  get busy() { return this.queued > 0; }
 
   paint(entry) {
-    const color = entry.downs > 0 ? COLORS.down : entry.target ? COLORS.target : entry.baseColor;
-    entry.mesh.material.color.setHex(color);
-    entry.mesh.material.emissive.setHex(entry.downs > 0 ? 0x0f5a45 : 0x000000);
-    entry.mesh.position.y = entry.restY - (entry.downs > 0 ? DIP : 0);
+    const down = entry.depth > 0.04;
+    entry.mesh.material.color.setHex(down ? COLORS.green : entry.target ? 0xf3ce86 : entry.baseColor);
+    entry.mesh.material.emissive.setHex(down ? 0x153a29 : entry.target ? 0x2e1904 : 0x000000);
+    entry.mesh.material.emissiveIntensity = down ? 0.25 : 0.12;
+    entry.pivot.rotation.x = Math.asin(DIP * entry.depth / (PRESS_Z - KEY_BACK));
   }
-
-  keyDown(midi) {
-    const entry = this.keys.get(midi);
-    if (!entry) return;
-    entry.downs++;
-    this.paint(entry);
-  }
-
-  keyUp(midi) {
-    const entry = this.keys.get(midi);
-    if (!entry) return;
-    entry.downs = Math.max(0, entry.downs - 1);
-    this.paint(entry);
-  }
-
-  /** Light a key for a moment: a note that came from the real keyboard. */
+  keyDown(midi) { const entry = this.keys.get(midi); if (entry) entry.downs++; }
+  keyUp(midi) { const entry = this.keys.get(midi); if (entry) entry.downs = Math.max(0, entry.downs - 1); }
   flash(midi, ms = 260) {
     if (!this.keys.has(midi)) return;
     this.keyDown(midi);
     setTimeout(() => this.keyUp(midi), ms);
   }
-
-  /** Mark the sticker key (1 to 6) the lesson is about, or pass null to clear it. */
   setTarget(number) {
-    for (const entry of this.keys.values()) {
-      if (entry.target) {
-        entry.target = false;
-        this.paint(entry);
-      }
-    }
     this.target = number;
-    if (number == null) return;
-    const entry = this.keys.get(keyByNumber(number).midi);
-    entry.target = true;
-    this.paint(entry);
+    for (const [midi, entry] of this.keys) {
+      entry.target = number != null && keyByNumber(number)?.midi === midi;
+      this.paint(entry);
+    }
   }
-
-  // ----------------------------------------------------------------------------------- Reachy
-
-  celebrate() {
-    this.mood.wiggle = 1.4; // seconds of happy antennas
-  }
-
-  /** Reachy leans in while it listens. */
-  listening(on) {
-    this.mood.tilt = on ? 1 : 0;
-  }
-
-  // ------------------------------------------------------------------------------------ frames
+  celebrate() { this.mood.wiggle = 1.4; }
+  listening(on) { this.mood.tilt = on ? 1 : 0; }
 
   resize() {
     const { clientWidth: width, clientHeight: height } = this.canvas.parentElement;
     if (!width || !height) return;
     this.renderer.setSize(width, height, false);
     this.camera.aspect = width / height;
-    // On a narrow screen step back so the whole keyboard stays in view.
-    const aspect = width / height;
-    this.camera.fov = aspect < 0.8 ? 62 : aspect < 1.15 ? 46 : 34;
+    // Keep a consistent three-quarter view; fit width as well as height.
+    const distance = Math.max(1.04, 1.03 / this.camera.aspect);
+    const direction = new THREE.Vector3(-0.62, 0.63, 0.86).normalize();
+    this.camera.position.copy(this.controls.target).addScaledVector(direction, distance);
     this.camera.updateProjectionMatrix();
+    this.controls.update();
   }
 
   frame() {
@@ -420,18 +504,26 @@ export class Stage {
     this.tweens = this.tweens.filter((tween) => {
       const t = Math.min(1, (now - tween.start) / tween.ms);
       tween.step(t);
-      if (t >= 1) tween.resolve();
+      if (t === 1) tween.resolve();
       return t < 1;
     });
-
+    for (const entry of this.keys.values()) {
+      const to = entry.downs > 0 ? 1 : 0;
+      entry.midiDepth = THREE.MathUtils.lerp(entry.midiDepth, to, 1 - Math.exp(-dt * 35));
+      if (Math.abs(entry.midiDepth - to) < 0.001) entry.midiDepth = to;
+      const depth = Math.max(entry.armDepth, entry.midiDepth);
+      if (Math.abs(depth - entry.depth) > 0.00001) { entry.depth = depth; this.paint(entry); }
+    }
+    if (this.contactKey != null) { this.tip.copy(this.keyPoint(this.contactKey)); this.solveArm(); }
     this.mood.wiggle = Math.max(0, this.mood.wiggle - dt);
-    const swing = this.mood.wiggle > 0 ? Math.sin(now / 45) * 0.45 * Math.min(1, this.mood.wiggle) : 0;
-    this.antennas.forEach((antenna, i) => {
-      antenna.rotation.z = antenna.userData.rest + (i ? swing : -swing);
-    });
-    const tilt = this.mood.tilt * 0.22;
-    this.head.rotation.z += (tilt - this.head.rotation.z) * Math.min(1, dt * 6);
-
+    const swing = !this.reducedMotion && this.mood.wiggle > 0 ? Math.sin(now / 90) * 0.25 * Math.min(1, this.mood.wiggle) : 0;
+    this.antennas.forEach((antenna, i) => { antenna.rotation.z = antenna.userData.rest + (i ? swing : -swing); });
+    const keyX = this.target ? this.keys.get(keyByNumber(this.target).midi)?.pivot.position.x ?? 0 : 0;
+    const nod = this.reducedMotion ? 0 : Math.sin(now / 1400) * 0.014;
+    const damping = 1 - Math.exp(-dt * 5);
+    this.head.rotation.x = THREE.MathUtils.lerp(this.head.rotation.x, 0.30 + this.mood.tilt * 0.12 + nod, damping);
+    this.head.rotation.y = THREE.MathUtils.lerp(this.head.rotation.y, -0.35 + keyX * 1.2, damping);
+    this.head.rotation.z = THREE.MathUtils.lerp(this.head.rotation.z, -0.035 + this.mood.tilt * 0.10 + swing * 0.1, damping);
     this.controls.update();
     this.renderer.render(this.scene, this.camera);
   }
