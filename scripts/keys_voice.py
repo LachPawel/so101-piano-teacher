@@ -705,7 +705,7 @@ class Teacher:
         waiting.cancel()
         self.last_note = note
         # The window opens the moment the key sounds: sing along. Up to nine seconds; it closes early once
-        # it has a second of clear voice after the piano.
+        # it has HOLD_S of clear voice after the piano.
         start = time.perf_counter()
         emit("your_turn", note=note, seconds=self.listen_s)
         cut: list[int] = []  # samples at the start of the recording that hold the piano, known once it stops
