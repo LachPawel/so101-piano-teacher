@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>SO-101 Piano Teacher</title>
+    <meta
+      name="description"
+      content="A robot arm that plays a MIDI keyboard and checks your singing. Runs in your browser."
+    />
+    <link rel="stylesheet" href="css/style.css" />
+    <script type="importmap">
+      { "imports": { "three": "./vendor/three.module.min.js" } }
+    </script>
+  </head>
+  <body>
+    <header class="top">
+      <div>
+        <h1>SO-101 Piano Teacher</h1>
+        <p class="tagline">A robot arm plays a note. You sing it back. It tells you if you are flat or sharp.</p>
+      </div>
+      <div class="chips">
+        <button id="sound" class="chip on" type="button" aria-pressed="true">Sound on</button>
+        <button id="mic" class="chip" type="button" aria-pressed="false">Microphone off</button>
+        <button id="midi" class="chip" type="button">Connect MIDI keyboard</button>
+      </div>
+    </header>
+
+    <main>
+      <section class="stage" aria-label="Robot arm and keyboard">
+        <canvas id="stage"></canvas>
+        <p class="hint">Drag to look around. Keys 1 to 6 on your keyboard play the notes.</p>
+      </section>
+
+      <aside class="panel">
+        <section class="card now">
+          <p class="label" id="phase">Ready</p>
+          <p class="target"><span id="target-word">Pick a note</span> <span id="target-note"></span></p>
+          <p class="feedback" id="feedback">Press a note below, or start the lesson.</p>
+        </section>
+
+        <section class="card">
+          <p class="label">Your pitch</p>
+          <div class="meter" id="meter" aria-hidden="true">
+            <div class="zone"></div>
+            <div class="needle" id="needle"></div>
+          </div>
+          <div class="scale" aria-hidden="true"><span>flat</span><span>in tune</span><span>sharp</span></div>
+          <p class="reading" id="reading">Turn the microphone on to see your pitch.</p>
+        </section>
+
+        <section class="card">
+          <p class="label">Play</p>
+          <div class="notes" id="notes"></div>
+          <div class="row">
+            <button id="lesson" class="primary" type="button">Start singing lesson</button>
+          </div>
+          <div class="row">
+            <select id="tune" aria-label="Tune"></select>
+            <button id="play-tune" type="button">Play tune</button>
+          </div>
+          <label class="check"><input type="checkbox" id="speak" /> Say the feedback out loud</label>
+          <label class="check"><input type="checkbox" id="midi-sound" /> Play sound for MIDI keyboard notes</label>
+        </section>
+
+        <section class="card">
+          <p class="label">Log <span id="tally" class="tally"></span></p>
+          <ol class="log" id="log"></ol>
+        </section>
+      </aside>
+    </main>
+
+    <footer>
+      The arm here is simulated and follows a script. The real one runs a SmolVLA policy.
+      <a href="https://github.com/LachPawel/so101-piano-teacher">Code and story on GitHub</a>
+    </footer>
+
+    <script type="module" src="js/main.js"></script>
+  </body>
+</html>
