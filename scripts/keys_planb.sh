@@ -15,6 +15,8 @@ set -e
 cd "$(dirname "$0")/.."
 
 USER_ID=PawelLach
+# Public on the Hub as PawelLach/so101-piano-268ep-camera-ears and -camera-only; the old names redirect, and
+# the local copies are filed under them.
 DATA=${USER_ID}/so101_keys_teleop_20261116_212951_v2
 DATA_DIR="${HF_LEROBOT_HOME:-$HOME/.cache/huggingface/lerobot}/${DATA}"
 FRONT='"observation.images.front": "observation.images.camera1"'

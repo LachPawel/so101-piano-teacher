@@ -31,6 +31,25 @@ This is a hobby experiment, built at home on one rig. Expect rough edges.
 | `scripts/test_keys.py` | Tests that need no hardware, microphone or API key |
 | `web/` | A browser page: the arm and keyboard in 3D, a pitch meter and the singing lesson. Also the stage display. See `web/README.md` |
 
+## Models and data
+
+Everything the experiment used is public on Hugging Face. "Camera + ears" means the policy also gets the
+sound picture; "camera only" is its deaf twin, trained on the same episodes.
+
+| What | Hugging Face | Was called |
+| --- | --- | --- |
+| The policy shown live | [smolvla-so101-piano-flow](https://huggingface.co/PawelLach/smolvla-so101-piano-flow) | `train_2026-11-17_22-11-36` |
+| Its data, 300 episodes | [so101-piano-flow-300ep](https://huggingface.co/datasets/PawelLach/so101-piano-flow-300ep) | `so101_keys_flow_300ep` |
+| Policy, 268 episodes, camera + ears | [smolvla-so101-piano-268ep-camera-ears](https://huggingface.co/PawelLach/smolvla-so101-piano-268ep-camera-ears) | `train_2026-11-17_11-41-38` |
+| Policy, 268 episodes, camera only | [smolvla-so101-piano-268ep-camera-only](https://huggingface.co/PawelLach/smolvla-so101-piano-268ep-camera-only) | `train_2026-11-17_11-41-46` |
+| Data, 268 episodes | [camera + ears](https://huggingface.co/datasets/PawelLach/so101-piano-268ep-camera-ears), [camera only](https://huggingface.co/datasets/PawelLach/so101-piano-268ep-camera-only) | `so101_keys_teleop_20261116_212951_v2_both`, `..._v2_text` |
+| Policy, 134 episodes, 5k steps | [camera + ears](https://huggingface.co/PawelLach/smolvla-so101-piano-134ep-camera-ears-5k), [camera only](https://huggingface.co/PawelLach/smolvla-so101-piano-134ep-camera-only-5k) | `smolvla_keys_both_5k`, `smolvla_keys_text_5k` |
+| Training run, 134 episodes, camera only | [smolvla-so101-piano-134ep-camera-only-run](https://huggingface.co/PawelLach/smolvla-so101-piano-134ep-camera-only-run) | `train_2026-11-16_21-24-43` |
+| Data, 134 episodes | [camera + ears](https://huggingface.co/datasets/PawelLach/so101-piano-134ep-camera-ears), [camera only](https://huggingface.co/datasets/PawelLach/so101-piano-134ep-camera-only) | `so101_keys_teleop_20261116_212951_both`, `..._text` |
+
+The scripts still use the old names: Hugging Face redirects them, and the local copies on the rig are
+filed under them.
+
 ## Hardware
 
 - SO-101 follower and leader arms

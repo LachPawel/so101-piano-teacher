@@ -15,6 +15,7 @@
 set -e
 cd "$(dirname "$0")/.."
 
+# Public on the Hub as PawelLach/so101-piano-flow-300ep; the old name redirects, and the local copy is filed under it.
 DATA=${KEYS_FLOW_DATA:-PawelLach/so101_keys_flow_300ep}
 DATA_DIR="${HF_LEROBOT_HOME:-$HOME/.cache/huggingface/lerobot}/${DATA}"
 STEPS=${KEYS_FLOW_STEPS:-10000}
