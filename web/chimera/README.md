@@ -44,6 +44,10 @@ turn" out loud; and only then does the arm play the note again, which opens your
 your turn, so the microphone never hears him. Say "I've sung before" or "skip John" to go straight to
 the notes, "I'm a beginner" to get him back; `keys_voice.py --direct` starts without him.
 
+A note counts only when it is right and held in tune for one full second in one go: crossing it on the way
+somewhere else gets "Hold it longer", with how long you were on it and off it. The lane counts the hold
+live ("Hold it… 0.6 s", then "Held ✓"). The arm sets off while Reachy still says "Now your turn".
+
 The turn opens on the display as the arm starts your note, and your pitch is drawn from then on (grey
 while the piano also sounds). The pitch lane is on screen only for John's note, your turn and the
 verdict; a turn nobody closes (a teacher stopped with Ctrl+C) expires by itself.

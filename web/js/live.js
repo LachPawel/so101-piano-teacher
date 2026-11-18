@@ -19,6 +19,7 @@ const LANE_NOW = 0.8; // where "now" sits across the lane; the asked note runs o
 const LOW = 58.5; // the lane's bottom and top, in MIDI notes: A#3 to B4, around the six keys
 const HIGH = 70.5;
 const FRESH_S = 0.35; // a reading older than this is not "now"
+const HOLD_NEED_S = 1.0; // a note counts once it is held in tune this long in one go (keys_voice.py)
 const LANE_PHASES = new Set(["get_ready", "handover", "your_turn", "feedback"]);
 const esc = (text) => String(text).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
 const clamp = (value, lo, hi) => Math.max(lo, Math.min(hi, value));
@@ -44,8 +45,10 @@ export function centsWords(cents) {
 }
 
 /** The verdict on a sung note, as the teacher judges it. */
-export function verdict(cents) {
+export function verdict(cents, ok) {
   if (cents == null) return { tone: "none", word: "Not heard.", html: "Not heard.<br>Once more." };
+  // On the note only in passing: the rig wants it held for a full second in one go.
+  if (Math.abs(cents) <= IN_TUNE_CENTS && ok === false) return { tone: "off", word: "Hold it longer.", html: "Hold it.<br>A full second." };
   if (Math.abs(cents) <= IN_TUNE_CENTS) return { tone: "ok", word: "In tune.", html: "In tune.<br>Well done." };
   const way = cents < 0 ? "higher" : "lower";
   return { tone: "off", word: `A little ${way}.`, html: `A little<br>${way}.` };
@@ -67,7 +70,7 @@ export function headline(state) {
     case "your_turn":
       return { html: `Your turn:<br>sing ${note ?? ""}.`, tone: "sing" };
     case "feedback": {
-      const { html, tone } = verdict(state.sung?.cents ?? null);
+      const { html, tone } = verdict(state.sung?.cents ?? null, state.sung?.ok);
       return { html, tone };
     }
     case "thinking":
@@ -124,6 +127,7 @@ export function startLive(stage) {
     johnPitch.push([Date.now() / 1000, 69 + 12 * Math.log2(f0 / 440)]);
     while (johnPitch.length && johnPitch[0][0] < Date.now() / 1000 - LANE_S - 2) johnPitch.shift();
   }); // John, the singing head of beginner mode: null with ?chimera=0
+  let onNoteSince = null; // when your live pitch came onto the note and stayed, or null
   let state = null;
   let readings = []; // the pitch heard, oldest first
   const targets = []; // the notes asked for over time: { from, to (null while asked), midi }
@@ -169,7 +173,7 @@ export function startLive(stage) {
     if (now.sung && now.sung !== was.sung && now.phase === "feedback" && was.phase !== "feedback") {
       const cents = now.sung.cents;
       log(`you sang ${now.sung.note}: ${cents == null ? "nothing heard" : centsWords(cents)}`);
-      if (verdict(cents).tone === "ok") stage.celebrate();
+      if (verdict(cents, now.sung.ok).tone === "ok") stage.celebrate();
     }
     // Your words arrive in pieces: the log gets your line once the teacher answers it.
     if (now.teacher && !was.teacher && was.said) log(`you said “${was.said.trim()}”`);
@@ -194,7 +198,9 @@ export function startLive(stage) {
       setFeedback(press && press.ok === false ? `The arm hit ${press.name}` : "", press && press.ok === false ? "off" : "");
     } else if (s.phase === "feedback") {
       const cents = s.sung?.cents ?? null;
-      setFeedback(cents == null ? "No clear note was heard." : centsWords(cents), verdict(cents).tone === "ok" ? "good live" : "off live");
+      const judged = verdict(cents, s.sung?.ok);
+      const held = s.sung?.held != null && cents != null ? `, held ${s.sung.held.toFixed(1)} s` : "";
+      setFeedback(cents == null ? "No clear note was heard." : centsWords(cents) + held, judged.tone === "ok" ? "good live" : "off live");
     } else if (s.phase === "listening") {
       setFeedback("", "");
     } else if (s.phase !== "your_turn") {
@@ -244,20 +250,28 @@ export function startLive(stage) {
     let word = "";
     let mood = "";
     if (s.phase === "your_turn") {
-      if (s.keys_down.length) word = `Listen to ${s.asked}…`;
+      if (s.keys_down.length || heard?.piano) word = `Listen to ${s.asked}…`;
       else if (cents !== null) {
         const good = Math.abs(cents) <= IN_TUNE_CENTS;
-        word = good ? "In tune ✓" : cents < 0 ? "↑ Higher" : "↓ Lower";
+        // In tune counts once it is held: the count runs while you stay on the note, and starts over when you leave it.
+        if (good) onNoteSince ??= now;
+        else onNoteSince = null;
+        const heldFor = good ? now - onNoteSince : 0;
+        word = good ? (heldFor >= HOLD_NEED_S ? "Held ✓" : `Hold it… ${heldFor.toFixed(1)} s`) : cents < 0 ? "↑ Higher" : "↓ Lower";
         mood = good ? "good" : "off";
-      } else word = s.mic_on ? `Sing ${s.asked} now` : "No microphone";
+      } else {
+        if (!heard) onNoteSince = null; // you stopped: the next try counts from zero
+        word = s.mic_on ? `Sing ${s.asked} now` : "No microphone";
+      }
     } else if (s.phase === "playing" && goal !== null) {
       word = `Listen to ${s.asked}`;
     } else if (s.phase === "get_ready" && goal !== null) {
       word = "";
     } else if (s.phase === "feedback") {
-      word = verdict(s.sung?.cents ?? null).word;
-      mood = verdict(s.sung?.cents ?? null).tone === "ok" ? "good" : "off";
+      word = verdict(s.sung?.cents ?? null, s.sung?.ok).word;
+      mood = verdict(s.sung?.cents ?? null, s.sung?.ok).tone === "ok" ? "good" : "off";
     }
+    if (s.phase !== "your_turn") onNoteSince = null;
     const laneWord = $("lane-word");
     if (laneWord.textContent !== word) laneWord.textContent = word;
     laneWord.dataset.mood = mood;
@@ -429,7 +443,7 @@ export function startLive(stage) {
   source.addEventListener("state", (event) => {
     const next = JSON.parse(event.data);
     react(state, next);
-    coach?.(state, next, next.phase === "feedback" ? verdict(next.sung?.cents ?? null).tone : "");
+    coach?.(state, next, next.phase === "feedback" ? verdict(next.sung?.cents ?? null, next.sung?.ok).tone : "");
     state = next;
     render();
   });

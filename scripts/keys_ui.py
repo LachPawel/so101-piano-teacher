@@ -157,7 +157,7 @@ class Hub:
         self.last_event = time.time()
         # Your turn opens as the arm starts the note, and John sings with the arm's first one ("get_ready"):
         # the arm playing inside either does not end it.
-        yours = state["phase"] in ("your_turn", "get_ready")
+        yours = state["phase"] in ("your_turn", "get_ready", "handover")
         if kind == "tune":
             notes = list(event.get("notes", []))
             self.set(queue=notes, index=-1, results=[None] * len(notes), policy=event.get("policy", ""), arm_busy=True)
@@ -198,7 +198,7 @@ class Hub:
                 turn={"note": event.get("note"), "seconds": float(event.get("seconds", 6.0)), "t": started},
             )  # fmt: skip
         elif kind == "sung":
-            sung = {k: event.get(k) for k in ("note", "cents", "answer")}
+            sung = {k: event.get(k) for k in ("note", "cents", "answer", "held", "ok")}
             turn = state["turn"]
             if turn is not None and "ended" not in turn:
                 turn = {**turn, "ended": round(time.time() - turn["t"], 2)}
@@ -477,7 +477,7 @@ def demo(hub: Hub, stop: threading.Event) -> None:
         hub.piano_until = time.time() + PIANO_TAIL_S
         show("done")
         time.sleep(2.6)
-        show("sung", note="mi", cents=-20.0, answer="Well done.")
+        show("sung", note="mi", cents=-20.0, answer="Well done.", held=1.8, ok=True)
         show("teacher", text="You sang mi and were in tune. Well done.")
         target[0] = None
         time.sleep(4.0)

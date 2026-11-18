@@ -87,6 +87,7 @@ PIANO_TAIL_S = 0.2  # the software piano dies away this fast once its key is up 
 HELD_QUIET_S = 2.5
 JOHN_S = 1.9  # beginner mode: John sings for 1.6 s from the key's sound; this long after it he is done
 ARM_REACH_S = 4.0  # the arm needs up to this long to reach a key and sound it
+ARM_HEAD_START_S = 0.3  # after the teacher starts saying "Now your turn", the arm sets off this much later
 WARMUP_WORDS = {"warm", "warmup", "warming"}
 WARMUP_NOTES = ["do", "re", "mi", "fa", "sol", "la", "sol", "fa", "mi", "re", "do"]
 # What the user says about their experience: beginners get John, the others go straight to the notes.
@@ -685,11 +686,43 @@ def keep_clip(note: str, audio: NDArray[np.float32], result: dict[str, Any], kin
             f.writeframes(pcm)
 
 
+HOLD_NEED_S = 1.0  # in tune this long in one go, or it does not count: gliding across a note is not singing it
+HOLD_GAP = 4  # frames (64 ms) of breath or wobble that do not break a held note
+FRAME_S = 0.016  # one pitch reading of SwiftF0
+
+
+def held_in_tune(audio: NDArray[np.float32], note: str) -> dict[str, float]:
+    """How the note was held: `held`, the longest stretch in tune in one go (s); `in_s` and `off_s`, the
+    time sung in tune and off it; `cents`, where that longest stretch sat. Any octave counts."""
+    track = keys_listen.tracker().detect(np.ascontiguousarray(audio, dtype=np.float32), RATE)
+    hz, voiced = np.asarray(track.pitch_hz, dtype=float), np.asarray(track.confidence) >= 0.5
+    target = 440.0 * 2 ** ((keys_listen.MIDI[note] - 69) / 12)
+    cents = np.full(hz.shape, np.nan)
+    cents[voiced] = (1200 * np.log2(hz[voiced] / target) + 600) % 1200 - 600
+    good = voiced & (np.abs(np.nan_to_num(cents, nan=1e9)) <= kc.IN_TUNE_CENTS)
+    best, start, last = (0, 0), -1, -1
+    for i in np.flatnonzero(good):
+        if start < 0 or i - last > HOLD_GAP + 1:
+            start = int(i)
+        last = int(i)
+        if last + 1 - start > best[1] - best[0]:
+            best = (start, last + 1)
+    run = cents[best[0] : best[1]][good[best[0] : best[1]]]
+    return {
+        "held": (best[1] - best[0]) * FRAME_S,
+        "in_s": float(np.count_nonzero(good)) * FRAME_S,
+        "off_s": float(np.count_nonzero(voiced & ~good)) * FRAME_S,
+        "cents": float(np.median(run)) if run.size else 0.0,
+    }
+
+
 def judge_singing(
     audio: NDArray[np.float32], note: str, focus: VoiceFocus | None = None
 ) -> tuple[dict[str, Any], NDArray[np.float32]]:
     """SwiftF0's verdict on a sung note, on the voice alone when Voice Focus is there: the microphone also
-    hears the piano and the teacher's voice. Too little clear voice is "not heard", not a wild number."""
+    hears the piano and the teacher's voice. Too little clear voice is "not heard", not a wild number.
+    "Well done." takes the note held in tune for HOLD_NEED_S in one go: a voice that only crosses the note on
+    its way somewhere else has a fine average and did not sing it. The result says so in `ok` and `held`."""
     voice = focus.clip(audio) if focus is not None else audio
     result = keys_listen.check_note(voice, keys_listen.MIDI[note], RATE)
     if result["cents"] is not None and keys_listen.voiced_seconds(voice, RATE) < MIN_VOICED_S:
@@ -699,7 +732,16 @@ def judge_singing(
             "cents": None,
             "answer": kc.judge_pitch(None, keys_listen.MIDI[note])[1],
         }
-    return result, voice
+    if result["cents"] is None:
+        return {**result, "held": 0.0, "off_s": 0.0, "ok": False}, voice
+    # The hold only ever makes the verdict stricter: the note must be right on the voice alone, as before, AND
+    # held. For how long it was held, Voice Focus thins a sung note out and the raw microphone keeps it whole,
+    # so the better of the two counts; the raw one alone could mistake the piano's ringing for the singer.
+    hold = max((held_in_tune(clip, note) for clip in (voice, audio)), key=lambda h: h["held"])
+    ok = result["answer"] == "Well done." and hold["held"] >= HOLD_NEED_S
+    if result["answer"] == "Well done." and not ok:  # a fine average, never held
+        result = {**result, "answer": "Hold it longer."}
+    return {**result, "held": round(hold["held"], 2), "off_s": round(hold["off_s"], 2), "ok": ok}, voice
 
 
 class Teacher:
@@ -891,14 +933,26 @@ class Teacher:
             # John is gone, the teacher hands over out loud, and only then does the arm play it again
             emit("phase", name="handover", text="Now your turn", note=note)
             await self.tell(delegation_id, 'Say exactly these three words and nothing else: "Now your turn."')
-            await self.audio.finished_speaking(starts_within=4.0)
-        # Your turn starts on the display as the arm starts the note: it already draws what it hears.
-        emit("your_turn", note=note, seconds=self.listen_s + ARM_REACH_S)
+            # The arm needs a second or more to reach the key: it sets off while the words are still being
+            # said, so the note comes right after them. What is judged starts after the key anyway.
+            deadline = time.perf_counter() + 4.0
+            while not getattr(self.audio, "speaking", True) and time.perf_counter() < deadline:
+                await asyncio.sleep(0.03)
+            await asyncio.sleep(ARM_HEAD_START_S)
+            handed_over = True
+        else:
+            handed_over = False
+            # Your turn starts on the display as the arm starts the note: it already draws what it hears.
+            emit("your_turn", note=note, seconds=self.listen_s + ARM_REACH_S)
         loop = asyncio.get_running_loop()
         sounded = asyncio.Event()
         playing = asyncio.ensure_future(
             asyncio.to_thread(self.hands.play, [note], lambda _index: loop.call_soon_threadsafe(sounded.set))
         )
+        if handed_over:  # the display listens once the teacher is quiet: that voice is not your pitch
+            await self.audio.finished_speaking(starts_within=0.0)
+            if not sounded.is_set():
+                emit("your_turn", note=note, seconds=self.listen_s + ARM_REACH_S)
         waiting = asyncio.ensure_future(sounded.wait())
         await asyncio.wait([playing, waiting], return_when=asyncio.FIRST_COMPLETED)
         waiting.cancel()
@@ -935,14 +989,24 @@ class Teacher:
         keep_clip(note, sung, result)
         if self.focus is not None:
             keep_clip(note, voice, result, "_vf")
-        emit("sung", note=note, cents=result["cents"], answer=result["answer"])
+        emit("sung", note=note, cents=result["cents"], answer=result["answer"], held=result["held"], ok=result["ok"])
         if result["cents"] is None:
             return f"Nothing clear was heard for {note}.", result["answer"]
+        if result["ok"]:
+            return f"The user sang {note} and was in tune.", result["answer"]
         side = "flat" if result["cents"] < 0 else "sharp"
-        where = (
-            "in tune" if result["answer"] == "Well done." else f"{abs(round(result['cents']))} cents {side}"
-        )
-        return f"The user sang {note} and was {where}.", result["answer"]
+        off = abs(round(result["cents"]))
+        if off <= kc.IN_TUNE_CENTS:  # on the note on average, but only in passing: say how briefly
+            return (
+                f"The user only passed through {note}: in tune for {result['held']:.1f} seconds in one go, "
+                f"and off it for {result['off_s']:.1f} seconds. It takes one full second on the note. "
+                "Be blunt about it.",
+                "Hold it. One full second.",
+            )
+        fact = f"The user sang {note} and was {off} cents {side}."
+        if result["held"] >= 0.15:  # they did touch it: say how briefly, and how long they were off
+            fact += f" They touched the note for {result['held']:.1f} seconds and were off it for {result['off_s']:.1f}."
+        return fact, result["answer"]
 
     def shown(self) -> str:
         return "John, the singing head on the screen, sings it to show how, the arm plays it again, and " if self.show_s > 0 else "then "

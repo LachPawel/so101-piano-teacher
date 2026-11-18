@@ -938,6 +938,44 @@ def test_listen_names_the_notes_of_a_riff_and_checks_a_sung_note() -> None:
     assert silent["cents"] is None and "did not hear" in silent["answer"]
 
 
+def test_a_note_counts_only_when_it_is_held_in_tune_for_a_second() -> None:
+    pytest.importorskip("swift_f0")
+    import keys_voice
+
+    rng = np.random.default_rng(1)
+    hz = kpj.midi_hz
+    silence = np.zeros(int(0.2 * RATE), dtype=np.float32)
+
+    def glide(low: float, high: float, seconds: float) -> np.ndarray:
+        """A voice sliding from one pitch to another, with the harmonics of a sung tone."""
+        t = np.arange(int(seconds * RATE)) / RATE
+        midi = low + (high - low) * t / seconds
+        phase = 2 * np.pi * np.cumsum(440.0 * 2 ** ((midi - 69) / 12)) / RATE
+        return (0.2 * sum(np.sin(k * phase) / k for k in range(1, 7))).astype(np.float32)
+
+    # Held on the note: well done, and it says for how long.
+    held, _ = keys_voice.judge_singing(kpj.sung_tone(hz(52), rng), "mi")  # mi, an octave down
+    assert held["ok"] and held["answer"] == "Well done." and held["held"] >= keys_voice.HOLD_NEED_S
+    # Sliding from three semitones under to three over crosses mi: the average is "in tune", the singing was not.
+    crossed, _ = keys_voice.judge_singing(np.concatenate([silence, glide(49, 55, 2.0), silence]), "mi")
+    assert abs(crossed["cents"]) <= kc.IN_TUNE_CENTS and not crossed["ok"]
+    assert crossed["answer"] == "Hold it longer." and 0.1 < crossed["held"] < 0.6 and crossed["off_s"] > 1.0
+    # Too short on the note, then away: not held either.
+    brief = np.concatenate([silence, kpj.sung_tone(hz(52), rng, seconds=0.5), kpj.sung_tone(hz(49), rng, seconds=1.2)])
+    assert not keys_voice.judge_singing(brief, "mi")[0]["ok"]
+    # Found the note after a short wrong start and held it: that counts.
+    found = np.concatenate([silence, kpj.sung_tone(hz(49), rng, seconds=0.5), kpj.sung_tone(hz(52), rng, seconds=1.6)])
+    result, _ = keys_voice.judge_singing(found, "mi")
+    assert result["ok"] and abs(result["cents"]) <= kc.IN_TUNE_CENTS
+    # Off most of the time, on it for a second at the end: the hold never rescues a wrong note.
+    late = np.concatenate([silence, kpj.sung_tone(hz(49), rng, seconds=2.5), kpj.sung_tone(hz(52), rng, seconds=1.2)])
+    result, _ = keys_voice.judge_singing(late, "mi")
+    assert not result["ok"] and result["answer"] == "A little higher." and result["off_s"] > 2.0
+    # Never on it: the old verdict, and nothing was held.
+    flat, _ = keys_voice.judge_singing(kpj.sung_tone(hz(51.3), rng), "mi")
+    assert not flat["ok"] and flat["answer"] == "A little higher." and flat["held"] < 0.15
+
+
 def test_the_arm_restarts_its_policy_when_it_dies_and_gives_up_cleanly(monkeypatch: pytest.MonkeyPatch) -> None:
     import keys_voice
 

@@ -25,6 +25,10 @@ test("cents in words, with the teacher's tolerance", () => {
   assert.equal(verdict(49).tone, "ok");
   assert.equal(verdict(-51).word, "A little higher.");
   assert.equal(verdict(null).word, "Not heard.");
+  // In tune on average but never held for a second: not good enough.
+  assert.deepEqual(verdict(10, false), { tone: "off", word: "Hold it longer.", html: "Hold it.<br>A full second." });
+  assert.equal(verdict(10, true).tone, "ok");
+  assert.equal(verdict(-120, false).word, "A little higher.");
 });
 
 test("only a fresh reading counts as the pitch right now", () => {
