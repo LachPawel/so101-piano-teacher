@@ -1222,6 +1222,15 @@ def test_display_draws_the_sung_pitch_live_during_your_turn() -> None:
     with hub.cond:
         assert [r[0] for r in hub.pitch_since(0)[1]] == [100.0 + keys_ui.KEEP_PITCH_S + 1]
 
+    # The conversation: each turn starts a fresh line, for you and for the teacher.
+    talk = keys_ui.Hub()
+    for kind, text in [("teacher", "Hi! "), ("teacher", "Boop."), ("you", "How are"), ("you", " you?")]:
+        talk.event({"kind": kind, "text": text})
+    assert (talk.state["teacher"], talk.state["said"]) == ("Hi! Boop.", "How are you?")
+    talk.event({"kind": "teacher", "text": "Fantastic!"})
+    talk.event({"kind": "you", "text": "Play mi"})
+    assert (talk.state["teacher"], talk.state["said"]) == ("Fantastic!", "Play mi")
+
     # The microphone is the user only in their turn, once the piano is silent: never the piano or the teacher.
     assert not keys_ui.listening({"phase": "playing", "keys_down": []}, 10.0, 0.0)
     assert not keys_ui.listening({"phase": "your_turn", "keys_down": [64]}, 10.0, 0.0)

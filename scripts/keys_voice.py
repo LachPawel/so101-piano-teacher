@@ -546,6 +546,7 @@ class Teacher:
             self.audio.say(self.voice(from_pcm(event["delta"])))
         elif kind == "session.input_transcript.delta":
             self.transcript.heard(event.get("delta", ""))
+            emit("you", text=event.get("delta", ""))
         elif kind == "session.output_transcript.delta":
             self.transcript.spoke(event.get("delta", ""))
             print(event.get("delta", ""), end="", flush=True)

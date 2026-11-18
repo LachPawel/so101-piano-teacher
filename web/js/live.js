@@ -161,7 +161,8 @@ export function startLive(stage) {
       log(`you sang ${now.sung.note}: ${cents == null ? "nothing heard" : centsWords(cents)}`);
       if (verdict(cents).tone === "ok") stage.celebrate();
     }
-    if (now.said && now.said !== was.said) log(`you said “${now.said}”`);
+    // Your words arrive in pieces: the log gets your line once the teacher answers it.
+    if (now.teacher && !was.teacher && was.said) log(`you said “${was.said.trim()}”`);
   }
 
   function render() {

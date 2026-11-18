@@ -12,6 +12,7 @@ Events:
   result     index=2, heard="E4" or None              MIDI's verdict on that note
   done                                                the list is finished
   said       text="play mi sol la", read_as="play"    what the microphone heard, and how it was read
+  you        text="..."                               words the user is saying, as heard (arrives in pieces)
   teacher    text="..."                               words the voice teacher is speaking (arrives in pieces)
   your_turn  note="mi", seconds=6.0                   the user should sing this note now, within this long
   sung       note="mi", cents=-23.0, answer="A little higher."

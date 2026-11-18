@@ -96,6 +96,7 @@ class Hub:
         self.pitch: list[tuple[int, list[float | None]]] = []  # (number, reading), oldest first
         self.pitch_count = 0
         self.piano_until = 0.0  # when the last key came up, plus the piano's tail
+        self.speaker = ""  # who spoke last, "you" or "teacher": the other one starts a fresh line
         self.state: dict[str, Any] = {
             "phase": "idle",
             "phase_text": "Ready",
@@ -172,10 +173,15 @@ class Hub:
                 self.set(phase="idle", phase_text="Done", asked=None, arm_busy=False)
             else:
                 self.set(arm_busy=False)
-        elif kind == "said":
+        elif kind == "said":  # the request as the teacher read it: the arm or the lesson will follow
+            self.speaker = "you"
             self.set(said=event.get("text", ""), teacher="", phase="thinking", phase_text="Understanding")
         elif kind == "teacher":
-            self.set(teacher=(state["teacher"] + event.get("text", ""))[-400:])
+            fresh, self.speaker = self.speaker != "teacher", "teacher"
+            self.set(teacher=(("" if fresh else state["teacher"]) + event.get("text", ""))[-400:])
+        elif kind == "you":
+            fresh, self.speaker = self.speaker != "you", "you"
+            self.set(said=(("" if fresh else state["said"]) + event.get("text", ""))[-300:])
         elif kind == "your_turn":
             started = time.time()
             self.set(
