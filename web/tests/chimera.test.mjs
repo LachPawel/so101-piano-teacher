@@ -2,7 +2,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { coachIdle, coachStep } from "../js/chimera.js";
+import { bandNote, coachIdle, coachStep } from "../js/chimera.js";
 
 test("John sings the asked note once in get ready, after the piano is quiet, never in your turn", () => {
   // the key is still down: wait
@@ -27,4 +27,12 @@ test("between notes John says something", () => {
   assert.match(coachIdle({ phase: "feedback" }, "ok"), /proud/);
   assert.match(coachIdle({ phase: "feedback" }, "none"), /heard nothing/);
   assert.equal(coachIdle({ phase: "get_ready" }), null);
+});
+
+test("in band mode John sings each key the arm presses, once", () => {
+  const press = { note: 64, t: 10 };
+  assert.equal(bandNote({ press: null }, { mode: "band", press }).word, "mi");
+  assert.equal(bandNote({ press }, { mode: "band", press }), null); // the same press again
+  assert.equal(bandNote({ press: null }, { mode: "", press }), null); // not band mode
+  assert.equal(bandNote({ press: null }, { mode: "band", press: { note: 61, t: 11 } }), null); // not one of the six
 });

@@ -19,6 +19,7 @@ const LANE_NOW = 0.8; // where "now" sits across the lane; the asked note runs o
 const LOW = 58.5; // the lane's bottom and top, in MIDI notes: A#3 to B4, around the six keys
 const HIGH = 70.5;
 const FRESH_S = 0.35; // a reading older than this is not "now"
+const LANE_PHASES = new Set(["get_ready", "your_turn", "feedback"]);
 const esc = (text) => String(text).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
 const clamp = (value, lo, hi) => Math.max(lo, Math.min(hi, value));
 
@@ -57,6 +58,7 @@ export function headline(state) {
     case "loading":
       return { html: "Waking<br>the arm.", tone: "arm" };
     case "playing":
+      if (state.mode === "band") return { html: "Band mode.<br>Play along.", tone: "sing" };
       return note ? { html: `The arm<br>plays ${note}.`, tone: "arm" } : { html: "The arm<br>plays.", tone: "arm" };
     case "get_ready":
       return { html: `John sings ${note ?? ""}.<br>Watch.`, tone: "ready" };
@@ -259,6 +261,8 @@ export function startLive(stage) {
     if (laneWord.textContent !== word) laneWord.textContent = word;
     laneWord.dataset.mood = mood;
     $("lane").dataset.active = String(s.phase === "your_turn" || s.phase === "feedback");
+    // The lane is on screen only around a turn: John's note, your turn, the verdict. Never while you talk.
+    $("lane").dataset.shown = String(LANE_PHASES.has(s.phase));
 
     // The listening window of a lesson turn.
     const turn = s.turn && s.turn.note === s.asked ? s.turn : null;
@@ -284,7 +288,8 @@ export function startLive(stage) {
     const meter = $("meter");
     if (cents == null) {
       meter.className = "meter";
-      $("reading").textContent = heard ? (heard.piano ? "The piano is still sounding." : noteName(Math.round(heard.midi))) : "Sing, and your pitch shows here.";
+      const idle = state?.phase === "your_turn" ? "Sing, and your pitch shows here." : "Your pitch shows in your turn.";
+      $("reading").textContent = heard ? (heard.piano ? "The piano is still sounding." : noteName(Math.round(heard.midi))) : idle;
       return;
     }
     $("needle").style.left = `${50 + clamp(cents, -100, 100) / 2}%`;

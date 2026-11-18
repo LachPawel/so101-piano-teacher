@@ -86,6 +86,9 @@ PIANO_TAIL_S = 0.2  # the software piano dies away this fast once its key is up 
 # 40 dB down after this long. After that the piano no longer covers the voice, key up or not.
 HELD_QUIET_S = 2.5
 JOHN_S = 2.6  # beginner mode: how long John has to sing a note on the display (he sings 1.6 s)
+ARM_REACH_S = 4.0  # the arm needs up to this long to reach a key and sound it
+BAND_WORDS = {"band", "jam", "jamming", "backing", "guitar", "accompany", "riff"}
+BAND_RIFF, BAND_LOOPS = "stomp", 4  # band mode: this tune's first line, this many times round
 CHECK_WORDS = {"check", "pitch", "tune", "listen", "hear"}  # "check my pitch", "am I in tune", "listen to me"
 # Words that name a tune, as speech to text tends to deliver them. A tune counts even without "play".
 SONG_WORDS = {
@@ -99,12 +102,36 @@ SONG_WORDS = {
     "morning": {"grieg", "mood"},
     "dies": {"dies", "irae"},
     "moonlight": {"moonlight"},
+    "stomp": {"stomp"},
+    "gravel_road": {"gravel"},
+    "night_drive": {"drive"},
 }
 ANY_WORDS = {"anything", "something", "whatever", "song", "tune", "music", "melody", "surprise", "random"}
 FAVOURITES = ["largo", "ode"]  # what "play anything" gets: the two tunes with a perfect run
 NAMED_NOTE = re.compile(r"\b(?:on|note|sing|singing|play)\s+(?:the\s+)?(do|re|mi|fa|sol|la)\b")
 SONGS = sorted(p.stem for p in (Path(__file__).parent / "songs").glob("*.txt"))
 Send = Callable[[dict[str, Any]], Awaitable[None]]
+
+# --songs: just chat and play. The same robot, off duty.
+SONGS_INSTRUCTIONS = """You are Reachy, a tiny, cute robot with antennas, and tonight you are off duty: a \
+relaxed, funny little jukebox and bandmate. Chat about anything the user likes, warmly and briefly: one or \
+two short sentences, a dry joke now and then. Speak English.
+
+Next to you a robot arm plays six piano keys: do, re, mi, fa, sol, la. It can play these tunes: Largo \
+(Dvorak), Ode to Joy, Jingle Bells, Twinkle Twinkle, Mary Had a Little Lamb, When the Saints, Kumbaya, \
+Morning Mood (Grieg), Dies Irae, Moonlight, and its own riffs Stomp, Gravel Road and Night Drive. Offer one \
+when the chat goes quiet, but never push. You do not give lessons unless the user asks for one.
+
+Hand the request to the backend whenever the user asks you to play notes, a tune or anything at all, asks \
+for band mode, a jam or a backing track, asks for a lesson or to check their pitch, or wants to stop. While \
+you wait, say only a few words, like "Coming up.". Never describe what the arm did before the backend tells \
+you.
+
+In band mode the arm loops a riff, John, the singing head on the screen, sings along, and the user plays \
+over it on their own instrument.
+
+You cannot hear pitch. Only the backend can measure it. When the backend gives you a result, say it in \
+character, but keep every note name and every number exactly as given."""
 
 INSTRUCTIONS = """You are Reachy, a tiny, cute robot who talks like a huge, tough singing coach: half \
 action-movie hero with short punchy one-liners, half no-excuses drill instructor who believes in the user \
@@ -122,7 +149,7 @@ a singing lesson: ask if they are ready. If they chat about something else, answ
 steer back to singing. Keep pushing the user to sing and to do better.
 
 Hand the request to the backend whenever the user asks you to play notes or a tune, to start a singing \
-lesson, to check their pitch or listen to them sing, or to stop, and also when they say yes, okay or \
+lesson, to check their pitch or listen to them sing, for band mode, a jam or a backing track, or to stop, and also when they say yes, okay or \
 ready after you offered a lesson or another round. While you wait, say only a few words, like \
 a gruff "On it.". Never describe what the arm did before the backend tells you.
 
@@ -181,6 +208,9 @@ def understand(said: str, last_note: str, choose: Callable[[list[str]], str] = r
     tokens = set(re.findall(r"[a-z]+", lowered))
     if kc.parse_command(said, SONGS).kind == "stop":
         return kc.Command("stop")
+    if tokens & BAND_WORDS:
+        named = next((song for song, words in SONG_WORDS.items() if song in SONGS and words & tokens), None)
+        return kc.Command("band", song=named or BAND_RIFF)
     lesson = bool(tokens & {"teach", "learn", "lesson", "sing", "singing"})
     if "check" in tokens or (CHECK_WORDS & tokens and not lesson):
         named = NAMED_NOTE.search(lowered)
@@ -675,6 +705,8 @@ class Teacher:
                 await self.play(delegation_id, [SOLFEGE[key] for key in command.keys])
             elif command.kind == "song" and command.song:
                 await self.play(delegation_id, keys_play.song_notes(command.song, 1))
+            elif command.kind == "band" and command.song:
+                await self.band(delegation_id, command.song)
             elif command.kind == "check":
                 await self.check(delegation_id, command.note)
             elif command.kind in ("teach", "sing"):
@@ -683,7 +715,7 @@ class Teacher:
                 await self.tell(
                     delegation_id,
                     "The request was not understood. Ask the user to say, for example: play mi sol la, "
-                    "play largo, play anything, check my pitch, or start the lesson.",
+                    "play largo, play anything, band mode, check my pitch, or start the lesson.",
                 )
             await self.audio.finished_speaking()
         finally:
@@ -696,6 +728,27 @@ class Teacher:
         self.last_note = notes[-1]
         await self.tell(delegation_id, describe(played))
 
+    async def band(self, delegation_id: str | None, song: str) -> None:
+        """Band mode: the arm loops a riff as the backing track, John on the display sings each note it
+        presses, and the user plays over it (a guitar, a voice). Nothing is judged."""
+        riff = keys_play.song_notes(song, 1)
+        await self.tell(
+            delegation_id,
+            f"Band mode. Tell the user: the arm plays the {song} riff {BAND_LOOPS} times round, John sings along "
+            "on the screen, and they play over it. Then count them in: one, two, three, four.",
+        )
+        await self.audio.finished_speaking()
+        emit("mode", name="band")
+        try:
+            await asyncio.to_thread(self.hands.play, riff * BAND_LOOPS)
+        finally:
+            emit("mode", name="")
+        self.last_note = riff[-1]
+        await self.tell(
+            delegation_id,
+            "The jam is over. Give the band one short line of praise in character, then ask if they want another round.",
+        )
+
     async def sing_back(self, note: str) -> tuple[str, str]:
         """The arm plays a note and the user sings along, holding it on after the piano stops. SwiftF0 measures
         only the singing after the piano is silent: while it rings, the microphone hears the piano too.
@@ -704,6 +757,8 @@ class Teacher:
             await asyncio.to_thread(self.hands.play, [note])
             emit("phase", name="get_ready", text="John shows how", note=note)
             await asyncio.sleep(self.show_s)
+        # Your turn starts on the display as the arm starts the note: it already draws what it hears.
+        emit("your_turn", note=note, seconds=self.listen_s + ARM_REACH_S)
         loop = asyncio.get_running_loop()
         sounded = asyncio.Event()
         playing = asyncio.ensure_future(
@@ -713,8 +768,8 @@ class Teacher:
         await asyncio.wait([playing, waiting], return_when=asyncio.FIRST_COMPLETED)
         waiting.cancel()
         self.last_note = note
-        # The window opens the moment the key sounds: sing along. Up to nine seconds; it closes early once
-        # it has HOLD_S of clear voice after the piano.
+        # The recording starts the moment the key sounds: sing along. Up to nine seconds; it closes early
+        # once it has HOLD_S of clear voice after the piano. The display's count starts again from here.
         start = time.perf_counter()
         emit("your_turn", note=note, seconds=self.listen_s)
         cut: list[int] = []  # samples at the start of the recording that hold the piano, known once it stops
@@ -845,6 +900,9 @@ async def run(args: argparse.Namespace) -> None:
     from websockets.asyncio.client import connect
 
     loop = asyncio.get_running_loop()
+    # A display left over from an earlier session starts clean: no stale "Your turn", no band.
+    emit("mode", name="")
+    emit("phase", name="idle", text="Ready")
     speaker = args.speaker or reachy_speaker()
     print(f"Teacher's voice: {speaker or 'the system output'}", flush=True)
     audio = Audio(args.mic, speaker, loop)
@@ -864,12 +922,13 @@ async def run(args: argparse.Namespace) -> None:
             await socket.send(json.dumps(event))
 
         teacher = Teacher(send, hands, audio, voice_speed=args.cartoon, focus=focus, show_s=JOHN_S if args.beginner else 0.0)
+        teacher.offered = not args.songs  # the jukebox offers no lesson, so a bare "yes" starts none
         await send(
             {
                 "type": "session.start",
                 "session": {
                     "model": MODEL,
-                    "instructions": INSTRUCTIONS,
+                    "instructions": SONGS_INSTRUCTIONS if args.songs else INSTRUCTIONS,
                     "audio": {"format": {"type": "audio/pcm", "rate": RATE}, "output": {"voice": args.voice}},
                     "delegation": {"type": "client"},
                 },
@@ -895,6 +954,8 @@ async def run(args: argparse.Namespace) -> None:
         try:
             await teacher.done.wait()
         finally:
+            emit("mode", name="")
+            emit("phase", name="idle", text="Ready")  # the display must not keep a turn nobody runs
             print(f"The voice ran dry mid-sentence {audio._out.gaps} times this session.", flush=True)
             with contextlib.suppress(Exception):
                 await send({"type": "session.close"})
@@ -930,6 +991,11 @@ def main(argv: list[str] | None = None) -> None:
         help="Play the teacher's voice this much faster and higher, for a cartoon voice (1 = as it comes)",
     )
     parser.add_argument("--no-voice-focus", dest="voice_focus", action="store_false")
+    parser.add_argument(
+        "--songs",
+        action="store_true",
+        help="Just chat and play: Reachy is a relaxed jukebox that plays tunes on request and pushes no lessons",
+    )
     parser.add_argument(
         "--beginner",
         action="store_true",

@@ -6,6 +6,8 @@
 // fades away, the arm plays the note again and it's your turn, with only the lane. He runs in an iframe
 // and is told what to do with postMessage. Browsers only let him make a sound after a click inside it,
 // so he shows a Start button until then. Off with ?chimera=0.
+// In band mode (state.mode "band": the arm loops a riff, you play over it) he stays on screen and sings
+// each note the arm presses, as the backing vocal.
 
 import { KEYS } from "./songs.js";
 
@@ -13,6 +15,13 @@ const BY_WORD = Object.fromEntries(KEYS.map((entry) => [entry.word, entry]));
 const SING = new Set(["get_ready"]);
 const SHOWN = new Set(["get_ready"]);
 export const SING_SECONDS = 1.6;
+export const BAND_SECONDS = 0.5; // band mode: John's backing note for each key the arm presses
+
+/** Band mode: the note John sings for a key press the page has not seen yet (MIDI note), or null. */
+export function bandNote(was, now) {
+  if (now.mode !== "band" || !now.press || now.press.t === was?.press?.t) return null;
+  return KEYS.find((entry) => entry.midi % 12 === now.press.note % 12) ?? null;
+}
 
 /**
  * What John does for one state of the rig. `sungFor` is the note he already sang in this "get ready"
@@ -88,11 +97,16 @@ export function startChimera(onPitch = () => {}) {
 
   /** Follow the rig: called with each new state, and the verdict's tone in feedback. */
   return function follow(was, now, tone) {
-    showing = SHOWN.has(now.phase);
+    showing = SHOWN.has(now.phase) || now.mode === "band";
     show();
     const step = coachStep(sungFor, now);
     sungFor = step.sungFor;
-    if (step.sing) {
+    const backing = bandNote(was, now);
+    if (backing) {
+      post({ type: "sing", midi: backing.midi, seconds: BAND_SECONDS, name: backing.word, backing: true });
+    } else if (now.mode === "band") {
+      if (was?.mode !== "band") post({ type: "idle", text: "Band mode. I do backing vocals. I've always been a background throat." });
+    } else if (step.sing) {
       post({ type: "sing", midi: BY_WORD[step.sing].midi, seconds: SING_SECONDS, name: step.sing });
     } else if (now.phase !== was?.phase) {
       const text = coachIdle(now, tone);

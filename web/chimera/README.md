@@ -39,6 +39,18 @@ from exact IPA), his pitch drawn on the lane as a dashed line; then he fades awa
 note again and it's "Your turn: sing mi." with only the lane. He never sings in your turn, so the
 microphone never hears him. Without `--beginner` he stays hidden.
 
+The turn opens on the display as the arm starts your note, and your pitch is drawn from then on (grey
+while the piano also sounds). The pitch lane is on screen only for John's note, your turn and the
+verdict; a turn nobody closes (a teacher stopped with Ctrl+C) expires by itself.
+
+## Songs and band mode
+
+- `keys_voice.py --songs`: just chat and play. Reachy is a relaxed jukebox: "play largo", "play
+  anything", "play stomp". No lessons unless you ask.
+- Band mode, in any mode: say "band mode" or "jam with me" (or "jam on largo"). The arm loops the
+  riff's first line four times as a backing track, John stays on screen and sings each key the arm
+  presses, and you play over it. Nothing is judged, and the teacher's microphone is closed meanwhile.
+
 ## Sound on another speaker
 
 John plays through the browser, so through the Mac's sound output: pick the speaker there (for

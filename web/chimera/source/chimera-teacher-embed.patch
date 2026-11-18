@@ -247,16 +247,16 @@ index 79b6a3e..75c45b7 100644
      if (this.small.width !== w || this.small.height !== h) {
 diff --git a/src/ui/teacher/Coach.tsx b/src/ui/teacher/Coach.tsx
 new file mode 100644
-index 0000000..57bf864
+index 0000000..501ba1e
 --- /dev/null
 +++ b/src/ui/teacher/Coach.tsx
-@@ -0,0 +1,223 @@
+@@ -0,0 +1,226 @@
 +/**
 + * The coach embed, "John": the 3D head. He sings one note when the page around asks, on its
 + * solfège name (do re mi fa sol la, from exact IPA), so you see the tongue, jaw and lips before
 + * your turn; while he sings, his pitch goes to the page ("pitch" messages) to draw on its lane. Another page shows it in an iframe and talks to it with postMessage (same origin only):
 + *
-+ *   in   { type: "sing", midi, word?, seconds = 1.6, name? }         sing one note; name "mi" sings mi, else word, else "la"
++ *   in   { type: "sing", midi, word?, seconds = 1.6, name?, backing? }  sing one note; name "mi" sings mi, else word, else "la"
 + *        { type: "stop" }                                              stop singing
 + *        { type: "idle", text? }                                       clear the note, say something else
 + *        { type: "body", body: "male" | "female" | "child" }
@@ -323,6 +323,8 @@ index 0000000..57bf864
 +  word: string;
 +  seconds: number;
 +  name?: string;
++  /** a backing note (band mode): no "your turn" after it */
++  backing?: boolean;
 +}
 +
 +type Caption = { line: string; quip: string; mood: "wait" | "sing" | "after" };
@@ -368,7 +370,7 @@ index 0000000..57bf864
 +    const sing = (ask: Ask) => {
 +      const st = useStore.getState();
 +      const shown = SOLFEGE[ask.name ?? ""] ? ask.name! : ask.word;
-+      const quip = QUIPS[shown] ?? ANY_QUIP;
++      const quip = ask.backing ? "Backing vocals. Living the dream." : (QUIPS[shown] ?? ANY_QUIP);
 +      if (!st.started) {
 +        setPending(ask);
 +        setCaption({ line: `I want to sing ${ask.name ?? noteName(ask.midi)}!`, quip: "Click Start, browsers won't let me make a sound until you do.", mood: "wait" });
@@ -389,6 +391,7 @@ index 0000000..57bf864
 +        useStore.getState().noteOff(ask.midi);
 +        singing = false;
 +        tell("sang", { midi: ask.midi });
++        if (ask.backing) return;
 +        afterTimer = window.setTimeout(() => {
 +          if (my === turn) setCaption({ line: `Your turn now: ${shown}`, quip: AFTER[my % AFTER.length], mood: "after" });
 +        }, 400);
@@ -400,7 +403,7 @@ index 0000000..57bf864
 +      if (e.origin !== location.origin || !e.data || typeof e.data !== "object") return;
 +      const m = e.data as Record<string, unknown>;
 +      if (m.type === "sing" && typeof m.midi === "number" && m.midi >= 24 && m.midi <= 96) {
-+        sing({ midi: Math.round(m.midi), word: typeof m.word === "string" && m.word ? m.word.toLowerCase() : "la", seconds: typeof m.seconds === "number" ? m.seconds : 1.6, name: typeof m.name === "string" ? m.name : undefined });
++        sing({ midi: Math.round(m.midi), word: typeof m.word === "string" && m.word ? m.word.toLowerCase() : "la", seconds: typeof m.seconds === "number" ? m.seconds : 1.6, name: typeof m.name === "string" ? m.name : undefined, backing: m.backing === true });
 +      } else if (m.type === "stop") {
 +        turn++;
 +        release();

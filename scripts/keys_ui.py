@@ -57,6 +57,8 @@ NAMES = ("C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B")
 
 LIVE_WINDOW_S = 0.4  # the newest sound the live pitch is read from
 EDGE_FRAMES = 3  # SwiftF0's last few frames run off the end of the sound and are never sure
+TURN_GRACE_S = 3.0  # a turn is over this long after its window, even if nobody said so
+STALE_S = 45.0  # the arm, John or a verdict with no news for this long: whoever ran it has stopped
 PIANO_TAIL_S = 0.2  # the software piano dies away this fast once its key is up
 HELD_QUIET_S = 2.5  # a key left resting down has faded about 40 dB this long after the press
 KEEP_PITCH_S = 15.0  # how much pitch history a newly opened page gets
@@ -119,7 +121,9 @@ class Hub:
             "press": None,
             "midi": False,
             "ears_on": False,
+            "mode": "",  # "band": the arm loops a riff, John sings along, you play over it
         }
+        self.last_event = time.time()
 
     def set(self, **changes: Any) -> None:
         with self.cond:
@@ -150,20 +154,20 @@ class Hub:
     def event(self, event: dict[str, Any]) -> None:
         """One line from the rig: update the picture."""
         kind, state = event.get("kind"), self.state
+        self.last_event = time.time()
+        # Your turn opens as the arm starts the note: the arm playing inside it does not end it.
+        yours = state["phase"] == "your_turn"
         if kind == "tune":
             notes = list(event.get("notes", []))
-            self.set(
-                queue=notes, index=-1, results=[None] * len(notes), policy=event.get("policy", ""),
-                phase="playing", phase_text="The arm plays", asked=None, sung=None, press=None, arm_busy=True,
-            )  # fmt: skip
+            self.set(queue=notes, index=-1, results=[None] * len(notes), policy=event.get("policy", ""), arm_busy=True)
+            if not yours:
+                self.set(phase="playing", phase_text="The arm plays", asked=None, sung=None, press=None)
         elif kind == "ask":
-            self.set(
-                index=event.get("index", 0),
-                asked=event.get("note"),
-                phase="playing",
-                phase_text="The arm plays",
-                arm_busy=True,
-            )
+            self.set(index=event.get("index", 0), arm_busy=True)
+            if not yours:
+                self.set(asked=event.get("note"), phase="playing", phase_text="The arm plays")
+        elif kind == "mode":
+            self.set(mode=event.get("name", ""))
         elif kind == "result":
             results = list(state["results"])
             index = event.get("index", 0)
@@ -208,6 +212,23 @@ class Hub:
             )
 
 
+    def expire(self, now: float) -> None:
+        """Nothing lasts forever: a turn whose window has passed, or a teacher that stopped mid-note
+        (Ctrl+C), must not leave "Your turn" on the screen with the microphone drawn as your pitch."""
+        state = self.state
+        turn = state["turn"]
+        over = state["phase"] == "your_turn" and (turn is None or now > turn["t"] + turn["seconds"] + TURN_GRACE_S)
+        stale = state["phase"] in ("playing", "get_ready", "feedback", "thinking") and now > self.last_event + STALE_S
+        if over or stale:
+            self.set(phase="idle", phase_text="Ready", asked=None, arm_busy=False, mode="" if stale else state["mode"])
+
+
+def turn_open(state: dict[str, Any], now: float) -> bool:
+    """Whether the user's window is open: from the moment the arm starts their note until it closes."""
+    turn = state.get("turn")
+    return state["phase"] == "your_turn" and turn is not None and now <= turn["t"] + turn["seconds"] + TURN_GRACE_S
+
+
 def find_web(path: str | None) -> Path:
     """The folder of the page: the one asked for, else the first of WEB_DIRS that has an index.html."""
     for folder in [Path(path).expanduser()] if path else WEB_DIRS:
@@ -245,6 +266,7 @@ def follow_events(hub: Hub, stop: threading.Event, position: int) -> None:
                         continue
         except OSError:
             pass
+        hub.expire(time.time())
         time.sleep(0.04)
 
 
@@ -355,7 +377,8 @@ def follow_voice(hub: Hub, mic: str | None, stop: threading.Event) -> None:
             while not stop.is_set():
                 time.sleep(0.05)
                 now = time.time()
-                if not listening(hub.state, now, hub.piano_until):
+                hub.expire(now)
+                if not turn_open(hub.state, now):
                     if heard_last:  # one empty reading ends the line
                         hub.add_pitch(now, None, 0.0)
                         heard_last = False
@@ -365,7 +388,9 @@ def follow_voice(hub: Hub, mic: str | None, stop: threading.Event) -> None:
                 result = tracker.detect(audio, rate)
                 hz, _cents = live_pitch(result.pitch_hz, result.confidence, 69)
                 level = float(np.sqrt(np.mean(audio[-rate // 10 :] ** 2)))
-                hub.add_pitch(now, None if hz is None else hz_to_midi(hz), level)
+                # the whole turn is drawn; while the piano sounds the reading is marked as the piano's
+                piano = not listening(hub.state, now, hub.piano_until)
+                hub.add_pitch(now, None if hz is None else hz_to_midi(hz), level, piano)
                 heard_last = True
     except (Exception, SystemExit) as error:  # noqa: BLE001  the display still works without the microphone
         print(f"No live pitch for the display ({type(error).__name__}: {error}).")
@@ -430,15 +455,16 @@ def demo(hub: Hub, stop: threading.Event) -> None:
         hub.set(keys_down=[])
         hub.piano_until = time.time() + PIANO_TAIL_S
         show("done")
-        # keys_voice.py --beginner: John sings it on the display, then the arm plays it again: your turn
+        # keys_voice.py --beginner: John sings it on the display, then it is your turn: the arm plays it again
         show("phase", name="get_ready", text="John shows how", note="mi")
         time.sleep(2.6)
+        show("your_turn", note="mi", seconds=9.0)  # the window opens as the arm starts the note
         show("tune", notes=["mi"], policy="flow+smooth+60hz (demo)")
         show("ask", note="mi", index=0)
         time.sleep(1.2)
         hub.set(keys_down=[64], press={"note": 64, "name": "E4", "ok": True, "t": time.time()})
         show("result", index=0, heard="E4")
-        show("your_turn", note="mi", seconds=6.0)  # the window opens as the key sounds: sing along
+        show("your_turn", note="mi", seconds=6.0)  # the key sounds: the count starts
         time.sleep(1.0)
         hub.set(keys_down=[])
         hub.piano_until = time.time() + PIANO_TAIL_S
@@ -448,6 +474,24 @@ def demo(hub: Hub, stop: threading.Event) -> None:
         show("teacher", text="You sang mi and were in tune. Well done.")
         target[0] = None
         time.sleep(4.0)
+        # Band mode: the arm loops a riff, John sings each key it presses, you play over it.
+        show("phase", name="listening", text="Listening")
+        show("said", text="band mode, I have my guitar", read_as="band")
+        time.sleep(1.0)
+        show("mode", name="band")
+        riff = ["do", "do", "re", "do", "fa", "mi"]
+        show("tune", notes=riff, policy="flow+smooth+60hz (demo)")
+        for index, note in enumerate(riff):
+            show("ask", note=note, index=index)
+            time.sleep(0.7)
+            hub.set(keys_down=[NOTE_OF[note]], press={"note": NOTE_OF[note], "name": names[note], "ok": True, "t": time.time()})  # fmt: skip
+            time.sleep(0.3)
+            hub.set(keys_down=[])
+            show("result", index=index, heard=names[note])
+            time.sleep(0.3)
+        show("done")
+        show("mode", name="")
+        time.sleep(2.0)
 
 
 def make_handler(hub: Hub, web: Path) -> type[BaseHTTPRequestHandler]:

@@ -1064,6 +1064,15 @@ def test_voice_teacher_routes_requests_to_the_arm_and_the_pitch_check() -> None:
         assert "John, the singing head on the screen" in facts[0]
         assert facts[1] == "The user sang mi and was in tune. Tell them that, then: Well done."
 
+        # Band mode: the arm loops the riff's first line; nothing is recorded or judged.
+        await teacher.on_event({"type": "session.output_transcript.delta", "delta": "Ok."})
+        arm.asked, sent[:], audio.sung = [], [], []
+        await user_says("band mode, I have my guitar")
+        riff = keys_voice.keys_play.song_notes("stomp", 1)
+        assert arm.asked == [riff * keys_voice.BAND_LOOPS]
+        facts = [e["content"] for e in sent if e["type"] == "session.commentary.append"]
+        assert facts[0].startswith("Band mode.") and facts[-1].startswith("The jam is over.")
+
         await teacher.on_event({"type": "session.output_audio.delta", "delta": keys_voice.to_pcm(np.ones(4))})
         assert audio.said[-1] == pytest.approx(np.ones(4), abs=1e-3)
         await teacher.on_event({"type": "session.output_transcript.delta", "delta": "Bye."})
@@ -1079,6 +1088,11 @@ def test_voice_teacher_routes_requests_to_the_arm_and_the_pitch_check() -> None:
     assert understand("Just play some um, some anything").song == "largo"
     assert understand("play something by Beethoven").song == "ode"
     assert understand("jingle bells please").song == "jingle"
+    # Band mode: a jam over a riff, the default one or a named tune.
+    assert (understand("let's do band mode").kind, understand("let's do band mode").song) == ("band", "stomp")
+    assert understand("give me a backing track, I'll play guitar").kind == "band"
+    assert understand("jam on largo with me").song == "largo"
+    assert (understand("play stomp").kind, understand("play stomp").song) == ("song", "stomp")
     assert understand("play mi sol la").keys == [3, 5, 6]
     assert (
         understand("can you check my pitch on sol").note == "sol" and understand("am I in tune").note == "mi"
@@ -1278,6 +1292,32 @@ def test_display_draws_the_sung_pitch_live_during_your_turn() -> None:
     assert turn["note"] == "mi" and turn["seconds"] == 6.0 and hub.state["phase"] == "your_turn"
     hub.event({"kind": "done"})
     assert hub.state["phase"] == "your_turn"
+
+    # Your turn opens as the arm starts the note: the arm's own events inside it do not end it.
+    turn_hub = keys_ui.Hub()
+    turn_hub.event({"kind": "your_turn", "note": "mi", "seconds": 9.0})
+    turn_hub.event({"kind": "tune", "notes": ["mi"], "policy": "p"})
+    turn_hub.event({"kind": "ask", "note": "mi", "index": 0})
+    assert (turn_hub.state["phase"], turn_hub.state["asked"], turn_hub.state["queue"]) == ("your_turn", "mi", ["mi"])
+    opened = turn_hub.state["turn"]["t"]
+    assert keys_ui.turn_open(turn_hub.state, opened + 1.0)
+    assert not keys_ui.turn_open(turn_hub.state, opened + 9.0 + keys_ui.TURN_GRACE_S + 0.1)
+    assert not keys_ui.turn_open({"phase": "listening", "turn": turn_hub.state["turn"]}, opened + 1.0)
+    # A teacher stopped mid-turn (Ctrl+C) must not leave "Your turn" up: the turn expires by itself.
+    turn_hub.expire(opened + 5.0)
+    assert turn_hub.state["phase"] == "your_turn"
+    turn_hub.expire(opened + 9.0 + keys_ui.TURN_GRACE_S + 0.1)
+    assert (turn_hub.state["phase"], turn_hub.state["asked"]) == ("idle", None)
+    # So does an arm, John or a verdict nobody followed up on; a waiting teacher ("listening") stays.
+    turn_hub.event({"kind": "phase", "name": "get_ready", "note": "mi"})
+    turn_hub.expire(turn_hub.last_event + keys_ui.STALE_S + 1)
+    assert turn_hub.state["phase"] == "idle"
+    turn_hub.event({"kind": "phase", "name": "listening"})
+    turn_hub.expire(turn_hub.last_event + keys_ui.STALE_S + 1)
+    assert turn_hub.state["phase"] == "listening"
+    # Band mode is a flag beside the phase.
+    turn_hub.event({"kind": "mode", "name": "band"})
+    assert turn_hub.state["mode"] == "band"
     hub.event({"kind": "sung", "note": "mi", "cents": -40.0, "answer": "Well done."})
     assert hub.state["phase"] == "feedback" and "ended" in hub.state["turn"]
     hub.event({"kind": "your_turn", "note": "sol"})
