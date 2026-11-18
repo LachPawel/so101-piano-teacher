@@ -80,6 +80,7 @@ AGREE_WORDS = {
 MIN_VOICED_S = (
     0.4  # less clear voice than this after Voice Focus is not a sung note: noise, a cough, the piano
 )
+HOLD_S = 2.0  # seconds of clear singing after the piano that close the window early
 PIANO_TAIL_S = 0.2  # the software piano dies away this fast once its key is up (keys_synth.RELEASE_HALF_S)
 # A key the arm leaves resting down still fades: halving every 0.45 s (keys_synth.HOLD_HALF_S), it is about
 # 40 dB down after this long. After that the piano no longer covers the voice, key up or not.
@@ -600,7 +601,7 @@ class Teacher:
         send: Send,
         hands: Hands,
         audio: Any,
-        listen_s: float = 6.0,
+        listen_s: float = 9.0,
         voice_speed: float = 1.0,
         focus: VoiceFocus | None = None,
         rounds: int = 2,
@@ -703,14 +704,14 @@ class Teacher:
         await asyncio.wait([playing, waiting], return_when=asyncio.FIRST_COMPLETED)
         waiting.cancel()
         self.last_note = note
-        # The window opens the moment the key sounds: sing along. Up to six seconds; it closes early once
+        # The window opens the moment the key sounds: sing along. Up to nine seconds; it closes early once
         # it has a second of clear voice after the piano.
         start = time.perf_counter()
         emit("your_turn", note=note, seconds=self.listen_s)
         cut: list[int] = []  # samples at the start of the recording that hold the piano, known once it stops
 
         def enough(audio: NDArray[np.float32]) -> bool:
-            return bool(cut) and keys_listen.voiced_seconds(audio[cut[0] :], RATE) >= 1.0
+            return bool(cut) and keys_listen.voiced_seconds(audio[cut[0] :], RATE) >= HOLD_S
 
         recording = asyncio.ensure_future(self.audio.record(self.listen_s, enough))
         await playing  # returns once the arm has lifted off the key, or tried to
