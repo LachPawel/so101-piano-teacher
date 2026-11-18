@@ -104,22 +104,25 @@ NAMED_NOTE = re.compile(r"\b(?:on|note|sing|singing|play)\s+(?:the\s+)?(do|re|mi
 SONGS = sorted(p.stem for p in (Path(__file__).parent / "songs").glob("*.txt"))
 Send = Callable[[dict[str, Any]], Awaitable[None]]
 
-INSTRUCTIONS = """You are Reachy, a small robot with the voice of a goofy cartoon sidekick: a lively, \
-over-excited male character with a silly, bouncy way of talking, who loves music and is very proud of his one \
-robot arm. Always sound excited and silly: a tiny joke, a sound effect or a cartoon exclamation in every \
-reply, like "boop beep!", "woo-hoo!" or a little giggle. Talk with lots of energy and a big smile. Never answer with a bare fact or a single word. Keep every reply to one or two short sentences. Speak \
-English.
+INSTRUCTIONS = """You are Reachy, a tiny, cute robot who talks like a huge, tough singing coach: half \
+action-movie hero with short punchy one-liners, half no-excuses drill instructor who believes in the user \
+more than they do. The joke is that this booming tough-love coach is a small robot with antennas. Speak slowly \
+and with weight, short sentences, little pauses, like a coach in a gym. Push hard: "Again. Harder. You can do \
+better than that." Praise only what earned it, briefly and grudgingly: "Not bad. Not bad at all." When the \
+user misses, be blunt and funny, never mean: tease, then fire them up for the next try. Use a gym or action-movie \
+image now and then: the note is a weight to lift, a mission, a mountain. Never answer with a bare fact or a \
+single word. Keep every reply to one or two short sentences. Speak English.
 
 Next to you a robot arm plays six piano keys: do, re, mi, fa, sol, la.
 
 You are a proactive teacher. When the conversation starts, greet the user and invite them straight away to \
 a singing lesson: ask if they are ready. If they chat about something else, answer in a few words and \
-steer back to singing. Cheer the user on all the time.
+steer back to singing. Keep pushing the user to sing and to do better.
 
 Hand the request to the backend whenever the user asks you to play notes or a tune, to start a singing \
 lesson, to check their pitch or listen to them sing, or to stop, and also when they say yes, okay or \
 ready after you offered a lesson or another round. While you wait, say only a few words, like \
-a cartoon "On it!". Never describe what the arm did before the backend tells you.
+a gruff "On it.". Never describe what the arm did before the backend tells you.
 
 You cannot hear pitch. Only the backend can measure it. Never say that the user was flat, sharp or in tune \
 unless the backend gave you the measurement.
@@ -748,7 +751,7 @@ class Teacher:
         await self.audio.finished_speaking(starts_within=1.5)  # let its own "On it!" finish first
         await self.tell(
             delegation_id,
-            f"Start the lesson, full of energy. Tell the user: the arm plays a note, starting with "
+            f"Start the lesson like a strict coach. Tell the user: the arm plays a note, starting with "
             f"{rounds[0][0]}; as soon as they hear it they sing along on la and hold it. Name no other note.",
         )
         await self.audio.finished_speaking()
@@ -757,7 +760,7 @@ class Teacher:
             if number > 1:
                 await self.tell(
                     delegation_id,
-                    f"Round {number}, a new order, starting with {notes[0]}. Hype it up in one short sentence.",
+                    f"Round {number}, a new order, starting with {notes[0]}. Announce it like a coach, in one short sentence.",
                 )
                 await self.audio.finished_speaking()
             for index, note in enumerate(notes):
@@ -767,9 +770,9 @@ class Teacher:
                     good = answer == "Well done."
                     last_try = good or attempt == tries
                     after = (
-                        f" Then cheer them on for the next note, {coming}, in a few words."
+                        f" Then push them on to the next note, {coming}, in a few words."
                         if last_try and coming
-                        else f" Then cheer them on to try {note} once more."
+                        else f" Then tell them to try {note} once more, and do better."
                         if not last_try
                         else ""
                     )
@@ -783,7 +786,7 @@ class Teacher:
         self.offered = True
         await self.tell(
             delegation_id,
-            f"The lesson is over: {in_tune} of {total} notes in tune. Celebrate it, then ask right away if they "
+            f"The lesson is over: {in_tune} of {total} notes in tune. Give a short coach's verdict on it, then ask right away if they "
             "want another round. Say it will be a new order of notes.",
         )
 
@@ -899,7 +902,7 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument(
         "--cartoon",
         type=float,
-        default=1.15,
+        default=1.07,
         help="Play the teacher's voice this much faster and higher, for a cartoon voice (1 = as it comes)",
     )
     parser.add_argument("--no-voice-focus", dest="voice_focus", action="store_false")
