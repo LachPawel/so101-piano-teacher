@@ -25,6 +25,7 @@ This is a hobby experiment, built at home on one rig. Expect rough edges.
 | `plugins/lerobot_camera_spectrogram` | LeRobot camera plugin: a microphone or audio cable as a spectrogram image |
 | `plugins/lerobot_camera_scaled` | LeRobot camera plugin: capture at one size, deliver a smaller one |
 | `scripts/test_keys.py` | Tests that need no hardware, microphone or API key |
+| `web/` | A browser page: the arm and keyboard in 3D, a pitch meter and the singing lesson. See `web/README.md` |
 
 ## Hardware
 
