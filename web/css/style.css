@@ -53,6 +53,15 @@ main { max-width: 1600px; margin: auto; padding: 0 48px; display: grid; grid-tem
 .feedback { color: #70765f; margin-top: 10px; font-size: 12px; min-height: 1.5em; }
 .feedback.good { color: var(--accent); }
 .feedback.off { color: #b87b22; }
+.feedback.live { font-size: 22px; font-weight: 650; letter-spacing: -0.02em; }
+.now.singing { margin-inline: -16px; padding-inline: 16px; border-radius: 12px; background: #e3ecd2; box-shadow: inset 0 0 0 2px #8ea86a; }
+.now.singing .label { color: var(--accent); font-size: 13px; font-weight: 700; }
+.now.singing .label::before { width: 9px; height: 9px; background: var(--accent); animation: pulse 0.9s ease-in-out infinite; }
+@keyframes pulse { 50% { opacity: 0.25; } }
+.countdown { position: relative; height: 26px; margin-top: 12px; border-radius: 7px; overflow: hidden; background: var(--paper); border: 1px solid #c9d5b4; }
+.countdown i { position: absolute; inset: 0 auto 0 0; width: 100%; background: #9fb77c; }
+.countdown span { position: relative; display: flex; height: 100%; align-items: center; padding-inline: 10px; font: 600 11px/1 ui-monospace, SFMono-Regular, monospace; font-variant-numeric: tabular-nums; color: #2f3a22; }
+@media (prefers-reduced-motion: reduce) { .now.singing .label::before { animation: none; } }
 .panel .card:nth-child(3) { order: 1; }
 .panel .card:nth-child(2) { order: 2; }
 .panel .card:last-child { order: 3; border-bottom: 0; }

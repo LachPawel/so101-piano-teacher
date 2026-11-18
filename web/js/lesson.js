@@ -18,7 +18,7 @@ const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
  * @returns {Promise<object[]>}    one record per attempt
  */
 export async function runLesson(keys, io, timing = {}) {
-  const { ringOut = 500, listen = 2000, every = 80, pause = 1200, tries = 3 } = timing;
+  const { ringOut = 500, listen = 4000, every = 80, pause = 1200, tries = 3 } = timing;
   const report = [];
   for (const number of keys) {
     const key = keyByNumber(number);
@@ -29,7 +29,7 @@ export async function runLesson(keys, io, timing = {}) {
       await sleep(ringOut); // let the piano note die away before listening
       if (io.stopped()) return report;
 
-      io.show({ phase: "listen", key, attempt });
+      io.show({ phase: "listen", key, attempt, ms: listen });
       const readings = [];
       for (let elapsed = 0; elapsed < listen && !io.stopped(); elapsed += every) {
         readings.push(io.read());

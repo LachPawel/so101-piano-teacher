@@ -12,7 +12,7 @@ const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 const stage = new Stage($("stage"));
 const mic = new Microphone();
-const state = { sound: true, target: null, running: null, presses: 0, sung: 0, inTune: 0 };
+const state = { sound: true, target: null, running: null, presses: 0, sung: 0, inTune: 0, window: null };
 
 // ------------------------------------------------------------------------------------- display
 
@@ -42,6 +42,23 @@ function say(phase, feedback, mood = "") {
     $("feedback").textContent = feedback;
     $("feedback").className = `feedback ${mood}`;
   }
+}
+
+/** Your turn to sing: the card turns green and a bar counts the listening window down. */
+function singWindow(ms) {
+  state.window = ms ? { start: performance.now(), ms } : null;
+  document.querySelector(".now").classList.toggle("singing", !!ms);
+  $("countdown").hidden = !ms;
+  stage.listening(!!ms);
+  if (ms) requestAnimationFrame(countdown);
+}
+
+function countdown() {
+  if (!state.window) return;
+  const left = Math.max(0, state.window.ms - (performance.now() - state.window.start));
+  $("countdown-fill").style.width = `${(100 * left) / state.window.ms}%`;
+  $("countdown-text").textContent = `listening, ${(left / 1000).toFixed(1)} s left`;
+  if (left > 0) requestAnimationFrame(countdown);
 }
 
 function speak(text) {
@@ -76,7 +93,7 @@ function setRunning(what) {
   $("lesson").disabled = what === "tune";
   $("play-tune").disabled = what === "lesson";
   document.querySelectorAll("#notes button").forEach((button) => (button.disabled = what !== null));
-  if (what === null) stage.listening(false);
+  if (what === null) singWindow(0);
 }
 
 async function playTune() {
@@ -111,13 +128,13 @@ async function lesson() {
     show(step) {
       if (step.phase === "play") {
         setTarget(step.key.key);
-        stage.listening(false);
-        say(step.attempt === 1 ? "Listen" : `Listen again (try ${step.attempt})`, "");
+        singWindow(0);
+        say(step.attempt === 1 ? "Listen to the arm" : `Listen again (try ${step.attempt})`, "Get ready to sing.");
       } else if (step.phase === "listen") {
-        stage.listening(true);
-        say("Your turn", "Sing la on that note.");
+        say("Sing now", `Sing ${step.key.word} on "la" and hold it.`);
+        singWindow(step.ms);
       } else if (step.phase === "result") {
-        stage.listening(false);
+        singWindow(0);
         state.sung++;
         const good = step.verdict === "in_tune";
         if (good) {
@@ -178,6 +195,9 @@ function meter() {
   $("needle").style.left = `${50 + Math.max(-100, Math.min(100, cents)) / 2}%`;
   $("meter").className = `meter live ${good ? "good" : "off"}`;
   $("reading").textContent = `${noteName(midi)} · ${centsText(cents)}`;
+  if (state.window) {  // while you sing, say which way to go, in words big enough to read from a distance
+    say(null, good ? "In tune, keep holding" : cents < 0 ? "↑ Higher" : "↓ Lower", good ? "good live" : "off live");
+  }
 }
 
 // ---------------------------------------------------------------------------------------- MIDI
