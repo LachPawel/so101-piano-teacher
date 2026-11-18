@@ -155,8 +155,9 @@ class Hub:
         """One line from the rig: update the picture."""
         kind, state = event.get("kind"), self.state
         self.last_event = time.time()
-        # Your turn opens as the arm starts the note: the arm playing inside it does not end it.
-        yours = state["phase"] == "your_turn"
+        # Your turn opens as the arm starts the note, and John sings with the arm's first one ("get_ready"):
+        # the arm playing inside either does not end it.
+        yours = state["phase"] in ("your_turn", "get_ready")
         if kind == "tune":
             notes = list(event.get("notes", []))
             self.set(queue=notes, index=-1, results=[None] * len(notes), policy=event.get("policy", ""), arm_busy=True)
@@ -177,7 +178,7 @@ class Hub:
                 results[index] = {"heard": heard, "ok": right}
                 self.set(results=results)
         elif kind == "done":
-            if state["phase"] not in ("your_turn", "feedback"):  # the arm finishes while you already sing
+            if state["phase"] not in ("your_turn", "feedback", "get_ready"):  # the arm finishes while you already sing
                 self.set(phase="idle", phase_text="Done", asked=None, arm_busy=False)
             else:
                 self.set(arm_busy=False)
@@ -446,6 +447,8 @@ def demo(hub: Hub, stop: threading.Event) -> None:
         show("done")
         target[0] = None
         time.sleep(1.5)
+        # A beginner's note: John sings it as the arm's key sounds, then it is your turn: the arm plays it again
+        show("phase", name="get_ready", text="John shows how", note="mi")
         show("tune", notes=["mi"], policy="flow+smooth+60hz (demo)")
         show("ask", note="mi", index=0)
         time.sleep(1.2)
@@ -455,9 +458,7 @@ def demo(hub: Hub, stop: threading.Event) -> None:
         hub.set(keys_down=[])
         hub.piano_until = time.time() + PIANO_TAIL_S
         show("done")
-        # keys_voice.py --beginner: John sings it on the display, then it is your turn: the arm plays it again
-        show("phase", name="get_ready", text="John shows how", note="mi")
-        time.sleep(2.6)
+        time.sleep(1.5)
         show("your_turn", note="mi", seconds=9.0)  # the window opens as the arm starts the note
         show("tune", notes=["mi"], policy="flow+smooth+60hz (demo)")
         show("ask", note="mi", index=0)

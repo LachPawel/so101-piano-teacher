@@ -4,21 +4,23 @@ import { test } from "node:test";
 
 import { bandNote, coachIdle, coachStep } from "../js/chimera.js";
 
-test("John sings the asked note once in get ready, after the piano is quiet, never in your turn", () => {
-  // the key is still down: wait
-  assert.deepEqual(coachStep(null, { phase: "get_ready", asked: "mi", keys_down: [64] }), { sing: null, sungFor: null });
-  // the key is up: sing it
-  assert.deepEqual(coachStep(null, { phase: "get_ready", asked: "mi", keys_down: [] }), { sing: "mi", sungFor: "mi" });
+test("John sings the asked note with the arm in get ready: as a key sounds, once, never in your turn", () => {
+  const press = { note: 64, t: 10 };
+  // the arm is still on its way: wait
+  assert.deepEqual(coachStep(null, { press: null }, { phase: "get_ready", asked: "mi", press: null }), { sing: null, sungFor: null });
+  // the key sounds: sing it, even while the key stays down
+  assert.deepEqual(coachStep(null, { press: null }, { phase: "get_ready", asked: "mi", press, keys_down: [64] }), { sing: "mi", sungFor: "mi" });
   // once only
-  assert.deepEqual(coachStep("mi", { phase: "get_ready", asked: "mi", keys_down: [] }), { sing: null, sungFor: "mi" });
+  assert.deepEqual(coachStep("mi", { press }, { phase: "get_ready", asked: "mi", press }), { sing: null, sungFor: "mi" });
+  // the arm hit a wrong key: he still shows the note that was asked
+  assert.equal(coachStep(null, { press: null }, { phase: "get_ready", asked: "mi", press: { note: 65, t: 11 } }).sing, "mi");
+  // an old press from before does not count
+  assert.equal(coachStep(null, { press }, { phase: "get_ready", asked: "sol", press }).sing, null);
   // your turn: quiet, and he forgets, so the same note's next get ready is sung again
-  assert.deepEqual(coachStep("mi", { phase: "your_turn", asked: "mi", keys_down: [] }), { sing: null, sungFor: null });
-  assert.equal(coachStep(null, { phase: "get_ready", asked: "mi", keys_down: [] }).sing, "mi");
-  // without beginner mode there is no get ready: he never sings
-  assert.equal(coachStep(null, { phase: "your_turn", asked: "sol", keys_down: [] }).sing, null);
-  // not one of the six keys, or the arm's turn: nothing
-  assert.equal(coachStep(null, { phase: "get_ready", asked: "ti", keys_down: [] }).sing, null);
-  assert.equal(coachStep(null, { phase: "playing", asked: "mi", keys_down: [] }).sing, null);
+  assert.deepEqual(coachStep("mi", { press }, { phase: "your_turn", asked: "mi", press: { note: 64, t: 12 } }), { sing: null, sungFor: null });
+  // not one of the six keys, or the arm's own turn: nothing
+  assert.equal(coachStep(null, { press: null }, { phase: "get_ready", asked: "ti", press }).sing, null);
+  assert.equal(coachStep(null, { press: null }, { phase: "playing", asked: "mi", press }).sing, null);
 });
 
 test("between notes John says something", () => {

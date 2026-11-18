@@ -36,10 +36,11 @@ rsync -a --delete --exclude data --exclude README.md --exclude LICENSE --exclude
 
 ## The lesson: John shows first
 
-Reachy asks if it is your first time. For beginners (the default) each note goes: the arm plays it; the
-display says "John sings mi. Watch." and John appears at the bottom left, half see-through over the pitch
-lane, and sings it on its name (do, re, mi, fa, sol, la, from exact IPA), his pitch drawn on the lane as
-a dashed line; he fades away; "Your turn: sing mi." and the arm plays the note again. He never sings in
+Reachy asks if it is your first time. For beginners (the default) each note goes: the display says
+"John sings mi. Watch." and John appears at the bottom left, half see-through over the pitch lane; the
+arm plays the note and, the moment the key sounds, John sings it on its name (do, re, mi, fa, sol, la,
+from exact IPA), his pitch drawn on the lane as a dashed line; he fades away; "Your turn: sing mi." and
+the arm plays the note again. He never sings in
 your turn, so the microphone never hears him. Say "I've sung before" or "skip John" to go straight to
 the notes, "I'm a beginner" to get him back; `keys_voice.py --direct` starts without him.
 

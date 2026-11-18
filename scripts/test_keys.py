@@ -1329,6 +1329,11 @@ def test_display_draws_the_sung_pitch_live_during_your_turn() -> None:
     turn_hub.event({"kind": "phase", "name": "listening"})
     turn_hub.expire(turn_hub.last_event + keys_ui.STALE_S + 1)
     assert turn_hub.state["phase"] == "listening"
+    # A beginner's note: John sings with the arm, so the arm's own events do not end "get_ready" either.
+    turn_hub.event({"kind": "phase", "name": "get_ready", "note": "sol"})
+    for arm_event in ({"kind": "tune", "notes": ["sol"]}, {"kind": "ask", "note": "sol", "index": 0}, {"kind": "done"}):
+        turn_hub.event(arm_event)
+    assert (turn_hub.state["phase"], turn_hub.state["asked"]) == ("get_ready", "sol")
     # Band mode is a flag beside the phase.
     turn_hub.event({"kind": "mode", "name": "band"})
     assert turn_hub.state["mode"] == "band"

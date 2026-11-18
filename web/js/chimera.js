@@ -1,9 +1,9 @@
 // John, the singing head (experiment, beginner mode): a 3D head and throat that sings each note first.
 //
-// With keys_voice.py --beginner, each note goes: the arm plays it, then the rig says "get_ready" and John
-// (chimera/teacher.html, a build of github.com/jamesondh/chimera-vocal-synth, MIT) appears half see-through
-// over the pitch lane and sings it on its name, do re mi fa sol la, his pitch drawn on the lane. Then he
-// fades away, the arm plays the note again and it's your turn, with only the lane. He runs in an iframe
+// For a beginner each note goes: the rig says "get_ready", John (chimera/teacher.html, a build of
+// github.com/jamesondh/chimera-vocal-synth, MIT) appears half see-through over the pitch lane, the arm
+// plays the note and he sings it on its name, do re mi fa sol la, as the key sounds, his pitch drawn on
+// the lane. Then he fades away, the arm plays the note again and it's your turn, with only the lane. He runs in an iframe
 // and is told what to do with postMessage. Off with ?chimera=0.
 // In band mode (state.mode "band": the arm loops a riff, you play over it) he stays on screen and sings
 // each note the arm presses, as the backing vocal.
@@ -26,14 +26,15 @@ export function bandNote(was, now) {
 
 /**
  * What John does for one state of the rig. `sungFor` is the note he already sang in this "get ready"
- * (null after it). Returns { sing: the note to sing now or null, sungFor }. He sings only when the rig
- * says get_ready (beginner mode), once, after the piano is quiet: never in your turn, where the
- * microphone would hear him.
+ * (null after it). Returns { sing: the note to sing now or null, sungFor }. In get_ready (a beginner's
+ * note) the arm plays the note and he sings it with the arm: the moment a key sounds, once. Whatever key
+ * the arm hit, he sings the note that was asked. Never in your turn, where the microphone would hear him.
  */
-export function coachStep(sungFor, state) {
-  if (!SING.has(state.phase) || !state.asked || !BY_WORD[state.asked]) return { sing: null, sungFor: null };
-  if (sungFor === state.asked || (state.keys_down ?? []).length) return { sing: null, sungFor };
-  return { sing: state.asked, sungFor: state.asked };
+export function coachStep(sungFor, was, now) {
+  if (!SING.has(now.phase) || !now.asked || !BY_WORD[now.asked]) return { sing: null, sungFor: null };
+  const struck = !!now.press && now.press.t !== was?.press?.t;
+  if (sungFor === now.asked || !struck) return { sing: null, sungFor };
+  return { sing: now.asked, sungFor: now.asked };
 }
 
 /** What the coach says between notes, for one phase (null: say nothing new). */
@@ -128,7 +129,7 @@ export function startChimera(onPitch = () => {}) {
     const veil = document.getElementById("coach-veil");
     if (veil) veil.dataset.on = String(ALONG.has(now.mode));
     show();
-    const step = coachStep(sungFor, now);
+    const step = coachStep(sungFor, was, now);
     sungFor = step.sungFor;
     const backing = bandNote(was, now);
     if (backing) {

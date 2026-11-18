@@ -148,7 +148,7 @@ export function startLive(stage) {
       if (now.asked && BY_WORD[now.asked]) targets.push({ from: t, to: null, midi: BY_WORD[now.asked].midi });
       while (targets.length && targets[0].to !== null && targets[0].to < t - LANE_S) targets.shift();
     }
-    if (now.phase === "playing" && now.asked && (now.index !== was.index || now.asked !== was.asked)) {
+    if (["playing", "get_ready", "your_turn"].includes(now.phase) && now.asked && (now.index !== was.index || now.asked !== was.asked)) {
       stage.aim(BY_WORD[now.asked]?.key);
     }
     if (now.press && now.press.t !== was.press?.t) {

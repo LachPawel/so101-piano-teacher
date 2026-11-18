@@ -85,7 +85,7 @@ PIANO_TAIL_S = 0.2  # the software piano dies away this fast once its key is up 
 # A key the arm leaves resting down still fades: halving every 0.45 s (keys_synth.HOLD_HALF_S), it is about
 # 40 dB down after this long. After that the piano no longer covers the voice, key up or not.
 HELD_QUIET_S = 2.5
-JOHN_S = 2.6  # beginner mode: how long John has to sing a note on the display (he sings 1.6 s)
+JOHN_S = 1.5  # beginner mode: John sings for 1.6 s from the key's sound; this long after the arm is done, he is too
 ARM_REACH_S = 4.0  # the arm needs up to this long to reach a key and sound it
 WARMUP_WORDS = {"warm", "warmup", "warming"}
 WARMUP_NOTES = ["do", "re", "mi", "fa", "sol", "la", "sol", "fa", "mi", "re", "do"]
@@ -670,8 +670,8 @@ class Teacher:
         show_s: float = 0.0,
     ) -> None:
         self.send, self.hands, self.audio, self.listen_s = send, hands, audio, listen_s
-        # Beginner mode: after the arm, John (the display's singing head, web/chimera) sings the note on its
-        # name for this long, then the arm plays it again and the user sings along. 0: off.
+        # Beginner mode: John (the display's singing head, web/chimera) sings the note on its name as the
+        # arm's key sounds; this long after, the arm plays it again and the user sings along. 0: off.
         self.show_s = show_s
         self.strict = True  # the coach; False for the relaxed jukebox of --songs
         self.voice = Speedup(voice_speed)
@@ -813,10 +813,10 @@ class Teacher:
         """The arm plays a note and the user sings along, holding it on after the piano stops. SwiftF0 measures
         only the singing after the piano is silent: while it rings, the microphone hears the piano too.
         Returns the fact and what to say."""
-        if self.show_s > 0:  # beginner mode: the arm plays it, John shows how, then the usual turn
-            await asyncio.to_thread(self.hands.play, [note])
+        if self.show_s > 0:  # beginner: the arm plays it and John sings it as the key sounds; then the usual turn
             emit("phase", name="get_ready", text="John shows how", note=note)
-            await asyncio.sleep(self.show_s)
+            await asyncio.to_thread(self.hands.play, [note])
+            await asyncio.sleep(self.show_s)  # he holds his note a little longer than the key
         # Your turn starts on the display as the arm starts the note: it already draws what it hears.
         emit("your_turn", note=note, seconds=self.listen_s + ARM_REACH_S)
         loop = asyncio.get_running_loop()
