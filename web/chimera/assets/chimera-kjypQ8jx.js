@@ -1,0 +1,1 @@
+var e=new URL(`chimera-BuBfd9wE.wasm`,import.meta.url).href;export{e as default};

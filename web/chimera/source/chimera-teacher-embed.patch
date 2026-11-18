@@ -1,0 +1,635 @@
+diff --git a/.gitignore b/.gitignore
+index d7d4616..59cfafb 100644
+--- a/.gitignore
++++ b/.gitignore
+@@ -8,3 +8,6 @@ src/wasm/chimera.wasm
+ 
+ # duet shows (?show=<id>) are made locally and are never published: often covers of songs we have no rights to
+ public/shows/
++
++# the coach embed build (vite.teacher.config.ts)
++dist-teacher
+diff --git a/src/teacher.tsx b/src/teacher.tsx
+new file mode 100644
+index 0000000..d335a6e
+--- /dev/null
++++ b/src/teacher.tsx
+@@ -0,0 +1,30 @@
++/**
++ * Entry of the coach embed (teacher.html): the engine first, as in main.tsx, then the coach.
++ */
++import "./ui/styles.css";
++import "./ui/teacher/teacher.css";
++import { initChimera } from "./wasm/chimera.ts";
++import { useLightTheme } from "./ui/colors.ts";
++
++// the piano teacher's colours (so101-piano-teacher web/css/style.css): olive lines on paper, warm sound
++useLightTheme(
++  "#fffcf5",
++  { blue: "#8e917c", blueMid: "#b0b29f", blueDim: "#dcd9ca", frame: "#e3dfd1", green: "#4f6a2c", red: "#a94b36", pink: "#d87827", white: "#282b23", amber: "#d87827" },
++  ["#f6efdc", "#ecc98a", "#d87827", "#a94b36", "#5d2a17"],
++);
++
++const root = document.getElementById("root")!;
++
++async function boot(): Promise<void> {
++  try {
++    await initChimera();
++  } catch (err) {
++    root.textContent = `The voice engine could not load: ${err instanceof Error ? err.message : String(err)}`;
++    root.className = "coach-error";
++    return;
++  }
++  const { mountCoach } = await import("./ui/teacher/Coach.tsx");
++  mountCoach(root);
++}
++
++void boot();
+diff --git a/src/ui/colors.ts b/src/ui/colors.ts
+index e35f9ce..0e49410 100644
+--- a/src/ui/colors.ts
++++ b/src/ui/colors.ts
+@@ -23,6 +23,22 @@ export const TEXT = {
+   secondary: "#e2f5fc",
+ } as const;
+ 
++/**
++ * The theme: dark (the vector display: bright lines on black, blended by maximum) or light (dark
++ * lines on paper, blended by minimum), for pages that embed the head (the coach, teacher.html).
++ * `useLightTheme` must run before anything draws: it rewrites the palette in place.
++ */
++export const THEME = { light: false, bg: "#000000", add: "lighter" as GlobalCompositeOperation };
++
++/** Dark lines on `bg`, in the colours of the page around: `colors` replaces palette entries. */
++export function useLightTheme(bg: string, colors: Partial<typeof V>, heatStops: string[]): void {
++  THEME.light = true;
++  THEME.bg = bg;
++  THEME.add = "darken";
++  Object.assign(V, colors);
++  heatStops.forEach((c, i) => HEAT[i] && (HEAT[i][1] = c));
++}
++
+ /** mix two #rrggbb colours */
+ export function mix(hex: string, to: string, u: number): string {
+   const a = parseInt(hex.slice(1), 16), b = parseInt(to.slice(1), 16);
+@@ -30,7 +46,7 @@ export function mix(hex: string, to: string, u: number): string {
+   return "#" + [16, 8, 0].map((s) => ch(s).toString(16).padStart(2, "0")).join("");
+ }
+ /** the whitish core of a bright beam in this colour */
+-export const core = (hex: string): string => mix(hex, "#ffffff", 0.55);
++export const core = (hex: string): string => (THEME.light ? mix(hex, "#000000", 0.35) : mix(hex, "#ffffff", 0.55));
+ 
+ const HEAT: [number, string][] = [[0, "#3a2408"], [0.35, "#c9822a"], [0.6, "#ffb340"], [0.82, "#ffe39a"], [1, "#fff8ec"]];
+ /** sound level 0..1 → dim amber → amber → pale yellow → white */
+diff --git a/src/ui/components/AnatomyView3D.tsx b/src/ui/components/AnatomyView3D.tsx
+index fbcb2cc..48d2f8b 100644
+--- a/src/ui/components/AnatomyView3D.tsx
++++ b/src/ui/components/AnatomyView3D.tsx
+@@ -18,7 +18,7 @@ import { sameBody } from "../body.ts";
+ import { useStore } from "../store.ts";
+ import { VoiceModel } from "../analysis.ts";
+ import { useModel } from "../useModel.ts";
+-import { V } from "../colors.ts";
++import { V, THEME } from "../colors.ts";
+ import { articulatorSlots, tractInfo, type InfoFn, type OverlayFn, type SlotsFn } from "./AnatomyView.tsx";
+ import type { ViewFlags } from "../render/anatomy.ts";
+ import type { HumanArtic } from "../../wasm/engine.ts";
+@@ -76,7 +76,7 @@ export function AnatomyView3D(props: { slots?: SlotsFn; info?: InfoFn; showForma
+     }
+     // the palette's sRGB values go straight through, as on the 2D screens
+     gl.outputColorSpace = THREE.LinearSRGBColorSpace;
+-    gl.setClearColor(0x000000, 1);
++    gl.setClearColor(THEME.bg, 1);
+     const r = new Anatomy3D();
+     r.centred = !readoutsRef.current;
+     r.facing = feedRef.current?.facing ?? 1;
+@@ -228,7 +228,7 @@ export function AnatomyView3D(props: { slots?: SlotsFn; info?: InfoFn; showForma
+         gl.render(r.scene, camera);
+         ctx.setTransform(1, 0, 0, 1, 0, 0);
+         ctx.globalCompositeOperation = "source-over";
+-        ctx.fillStyle = "#000";
++        ctx.fillStyle = THEME.bg;
+         ctx.fillRect(0, 0, canvas.width, canvas.height);
+         ctx.drawImage(glCanvas, 0, 0, canvas.width, canvas.height);
+         ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+diff --git a/src/ui/render/anatomy3d.ts b/src/ui/render/anatomy3d.ts
+index 5013f5a..bcd286a 100644
+--- a/src/ui/render/anatomy3d.ts
++++ b/src/ui/render/anatomy3d.ts
+@@ -20,7 +20,7 @@ import type { HumanArtic, HumanFrame } from "../../wasm/types.ts";
+ import { NEUTRAL } from "../../wasm/engine.ts";
+ import type { TelemetryMessage } from "../../worklet/protocol.ts";
+ import type { VoiceModel } from "../analysis.ts";
+-import { V, heat, pressureLevel } from "../colors.ts";
++import { V, heat, pressureLevel, THEME } from "../colors.ts";
+ import { catmullRom, rotateAbout, type Vec } from "./geom.ts";
+ import { chaikin, type Pt } from "./vector.ts";
+ import { Beams, Poly } from "./beams3d.ts";
+@@ -668,7 +668,7 @@ export class Anatomy3D {
+ 
+   constructor() {
+     this.scene.add(this.beams.group);
+-    this.scene.fog = new THREE.Fog(0x000000, 50, 100);
++    this.scene.fog = new THREE.Fog(THEME.bg, 50, 100);
+     for (let i = 0; i < 200; i++) this.particles.push({ s: Math.random() * 17, u: Math.random() * 2 - 1, v: Math.random() * 2 - 1, life: Math.random(), px: NaN, py: NaN, pz: NaN });
+   }
+ 
+diff --git a/src/ui/render/beams3d.ts b/src/ui/render/beams3d.ts
+index d7f5189..6409ece 100644
+--- a/src/ui/render/beams3d.ts
++++ b/src/ui/render/beams3d.ts
+@@ -13,7 +13,7 @@ import * as THREE from "three";
+ import { LineSegments2 } from "three/addons/lines/LineSegments2.js";
+ import { LineSegmentsGeometry } from "three/addons/lines/LineSegmentsGeometry.js";
+ import { LineMaterial } from "three/addons/lines/LineMaterial.js";
+-import { core } from "../colors.ts";
++import { core, THEME } from "../colors.ts";
+ 
+ /** line widths (CSS px) the batches draw at; a beam takes the nearest */
+ const WIDTHS = [0.6, 0.85, 1.05, 1.3, 1.6, 2.1];
+@@ -131,7 +131,7 @@ export class Beams {
+     this.batches = WIDTHS.map((w) => {
+       const m = new LineMaterial({ linewidth: w, vertexColors: true, transparent: true, depthTest: false, depthWrite: false, toneMapped: false });
+       m.blending = THREE.CustomBlending;
+-      m.blendEquation = THREE.MaxEquation;
++      m.blendEquation = THEME.light ? THREE.MinEquation : THREE.MaxEquation;
+       m.fog = true;
+       const b = new Batch(m);
+       this.group.add(b.mesh);
+@@ -173,13 +173,16 @@ export class Beams {
+   /** one segment */
+   seg(x0: number, y0: number, z0: number, x1: number, y1: number, z1: number, color: string, width: number, alpha = 1): void {
+     const [r, g, b] = rgb(color);
+-    this.batch(width).seg(x0, y0, z0, x1, y1, z1, r * alpha, g * alpha, b * alpha);
++    const [R, G, B] = rgb(THEME.bg);
++    this.batch(width).seg(x0, y0, z0, x1, y1, z1, R + (r - R) * alpha, G + (g - G) * alpha, B + (b - B) * alpha);
+   }
+ 
+   private strokes(a: ArrayLike<number>, n: number, [r, g, b]: [number, number, number], al: number, bt: Batch, close: boolean): void {
+-    r *= al;
+-    g *= al;
+-    b *= al;
++    // a faint line fades into the background (black: darker; paper: lighter)
++    const [R, G, B] = rgb(THEME.bg);
++    r = R + (r - R) * al;
++    g = G + (g - G) * al;
++    b = B + (b - B) * al;
+     for (let i = 0; i < n - 1; i++) {
+       const j = 3 * i;
+       bt.seg(a[j], a[j + 1], a[j + 2], a[j + 3], a[j + 4], a[j + 5], r, g, b);
+diff --git a/src/ui/render/vector.ts b/src/ui/render/vector.ts
+index 79b6a3e..75c45b7 100644
+--- a/src/ui/render/vector.ts
++++ b/src/ui/render/vector.ts
+@@ -5,7 +5,7 @@
+  *
+  * Beams are drawn additively ("lighter"), so where lines cross they get brighter, like a beam.
+  */
+-import { V, core } from "../colors.ts";
++import { V, core, THEME } from "../colors.ts";
+ 
+ export type Pt = [number, number];
+ 
+@@ -36,7 +36,7 @@ export function pathOf(pts: ArrayLike<Pt>, close = false): Path2D {
+ /** stroke a path as a glowing beam */
+ export function beam(ctx: CanvasRenderingContext2D, path: Path2D, color: string, width: number, o: BeamOpts = {}): void {
+   ctx.save();
+-  ctx.globalCompositeOperation = "lighter";
++  ctx.globalCompositeOperation = THEME.add;
+   ctx.globalAlpha = o.alpha ?? 1;
+   ctx.lineJoin = "round";
+   ctx.lineCap = "round";
+@@ -76,7 +76,7 @@ export function ring(ctx: CanvasRenderingContext2D, x: number, y: number, r: num
+ 
+ export function dot(ctx: CanvasRenderingContext2D, x: number, y: number, r: number, color: string, alpha = 1): void {
+   ctx.save();
+-  ctx.globalCompositeOperation = "lighter";
++  ctx.globalCompositeOperation = THEME.add;
+   ctx.globalAlpha = alpha;
+   ctx.fillStyle = color;
+   ctx.beginPath();
+@@ -121,7 +121,7 @@ export interface LabelOpts {
+ export function label(ctx: CanvasRenderingContext2D, text: string, x: number, y: number, o: LabelOpts = {}): void {
+   const size = o.size ?? 11;
+   ctx.save();
+-  ctx.globalCompositeOperation = "lighter";
++  ctx.globalCompositeOperation = THEME.add;
+   ctx.globalAlpha = o.alpha ?? 1;
+   ctx.font = hfont(size, o.weight);
+   if (hasLetterSpacing) (ctx as CanvasRenderingContext2D & { letterSpacing: string }).letterSpacing = `${((o.ls ?? 0.14) * size).toFixed(2)}px`;
+@@ -199,7 +199,7 @@ export function ipaGlyph(ctx: CanvasRenderingContext2D, x: number, y: number, ip
+   const f = (n: number) => n.toFixed(2);
+   const stroke = (d: string) => {
+     ctx.save();
+-    ctx.globalCompositeOperation = "lighter";
++    ctx.globalCompositeOperation = THEME.add;
+     ctx.globalAlpha = alpha;
+     ctx.strokeStyle = color;
+     ctx.lineWidth = sw;
+@@ -210,7 +210,7 @@ export function ipaGlyph(ctx: CanvasRenderingContext2D, x: number, y: number, ip
+   };
+   const glyph = (s: string, tf?: (c: CanvasRenderingContext2D) => void) => {
+     ctx.save();
+-    ctx.globalCompositeOperation = "lighter";
++    ctx.globalCompositeOperation = THEME.add;
+     ctx.globalAlpha = alpha;
+     ctx.font = hfont(size);
+     ctx.textAlign = "center";
+@@ -275,6 +275,7 @@ export class Glow {
+   }
+ 
+   apply(canvas: HTMLCanvasElement, ctx: CanvasRenderingContext2D, dpr: number): void {
++    if (THEME.light) return; // a halo is light on black; on paper it would only grey the page
+     const W = canvas.width, H = canvas.height;
+     const w = Math.max(1, Math.round(W / this.down)), h = Math.max(1, Math.round(H / this.down));
+     if (this.small.width !== w || this.small.height !== h) {
+diff --git a/src/ui/teacher/Coach.tsx b/src/ui/teacher/Coach.tsx
+new file mode 100644
+index 0000000..76115ff
+--- /dev/null
++++ b/src/ui/teacher/Coach.tsx
+@@ -0,0 +1,186 @@
++/**
++ * The coach embed: only the 3D head, full frame, singing one note on "la" when the page around
++ * it asks. Another page shows it in an iframe and talks to it with postMessage (same origin only):
++ *
++ *   in   { type: "sing", midi, word = "la", seconds = 1.6, name? }   sing one note (name: "mi", for the caption)
++ *        { type: "stop" }                                              stop singing
++ *        { type: "idle", text? }                                       clear the note, say something else
++ *        { type: "body", body: "male" | "female" | "child" }
++ *        { type: "mute", on }                                          the head still sings, silently
++ *   out  { source: "chimera-coach", type: "ready" | "started" | "singing" | "sang" | "needs-click", midi? }
++ *
++ * Browsers start audio only from a click inside this frame, so until then a Start button waits
++ * over the head, and a note asked for meanwhile is sung as soon as it is clicked.
++ * URL: ?body=male|female|child, ?muted=1.
++ */
++import { StrictMode, useEffect, useState } from "react";
++import { createRoot } from "react-dom/client";
++import { AnatomyView3D } from "../components/AnatomyView3D.tsx";
++import { useStore } from "../store.ts";
++import { engine } from "../../audio/AudioEngine.ts";
++import { useSing, sungNow } from "../singing.ts";
++import { mouthWords } from "../mouthWords.ts";
++import { PRESETS } from "../body.ts";
++import { V } from "../colors.ts";
++import type { BodyName } from "../../worklet/protocol.ts";
++import type { ViewFlags } from "../render/anatomy.ts";
++
++const LETTERS = ["C", "C♯", "D", "E♭", "E", "F", "F♯", "G", "A♭", "A", "B♭", "B"];
++const noteName = (midi: number) => `${LETTERS[((midi % 12) + 12) % 12]}${Math.floor(midi / 12) - 1}`;
++
++/** One line of coaching per note of the scale (by pitch class), dry as a simulated throat. */
++const QUIPS: Record<number, string> = {
++  0: "Low and lazy. Yawn first, then la.",
++  2: "One small step up. Tongue taps, jaw drops.",
++  4: "Watch the tongue flick up for the L, then let the jaw fall.",
++  5: "Barely above mi. No need to panic. I can't panic, I have no adrenaline.",
++  7: "The voice box wants to climb. Let it stay calm, like mine. I'm a simulation.",
++  9: "La on la. Very meta. Open up, don't shout.",
++};
++const ANY_QUIP = "Copy my throat. It's open source.";
++const AFTER = ["Your turn. Copy the throat.", "Now you. I'll be watching. I have no eyelids.", "Your go. Same shape, your own throat."];
++
++const VIEW: ViewFlags = { pressure: true, particles: true, grid: false, calipers: false };
++const words = mouthWords(sungNow, V.green);
++
++interface Ask {
++  midi: number;
++  word: string;
++  seconds: number;
++  name?: string;
++}
++
++type Caption = { line: string; quip: string; mood: "wait" | "sing" | "after" };
++
++const tell = (type: string, extra: Record<string, unknown> = {}) => {
++  if (window.parent !== window) window.parent.postMessage({ source: "chimera-coach", type, ...extra }, location.origin);
++};
++
++const BODIES: BodyName[] = ["male", "female", "child"];
++
++function Coach() {
++  const started = useStore((s) => s.started);
++  const starting = useStore((s) => s.starting);
++  const [caption, setCaption] = useState<Caption>({ line: "Chimera", quip: "Your throat coach. I sing it, you copy it.", mood: "wait" });
++  const [pending, setPending] = useState<Ask | null>(null);
++  const [muted, setMuted] = useState(new URLSearchParams(location.search).get("muted") === "1");
++
++  useEffect(() => {
++    useStore.getState().setVolume(muted ? 0 : 0.8);
++  }, [muted]);
++
++  useEffect(() => {
++    const q = new URLSearchParams(location.search).get("body");
++    if (q && (BODIES as string[]).includes(q)) useStore.getState().setBody(PRESETS[q as BodyName]);
++    useStore.getState().setView({ ...VIEW, threeD: true });
++    let timer = 0;
++    let afterTimer = 0;
++    let turn = 0;
++
++    const release = () => {
++      clearTimeout(timer);
++      const st = useStore.getState();
++      for (const n of st.heldNotes) st.noteOff(n);
++    };
++
++    const sing = (ask: Ask) => {
++      const st = useStore.getState();
++      const name = ask.name ? `${ask.name}, ` : "";
++      const quip = QUIPS[((ask.midi % 12) + 12) % 12] ?? ANY_QUIP;
++      if (!st.started) {
++        setPending(ask);
++        setCaption({ line: `I want to sing ${ask.name ?? noteName(ask.midi)}!`, quip: "Click Start, browsers won't let me make a sound until you do.", mood: "wait" });
++        tell("needs-click", { midi: ask.midi });
++        return;
++      }
++      release();
++      clearTimeout(afterTimer);
++      useSing.getState().setLyrics(ask.word);
++      st.noteOn(ask.midi, 96);
++      setCaption({ line: `${ask.word}! (${name}${noteName(ask.midi)})`, quip, mood: "sing" });
++      tell("singing", { midi: ask.midi });
++      const my = ++turn;
++      timer = window.setTimeout(() => {
++        useStore.getState().noteOff(ask.midi);
++        tell("sang", { midi: ask.midi });
++        afterTimer = window.setTimeout(() => {
++          if (my === turn) setCaption({ line: `Your turn: ${ask.name ?? noteName(ask.midi)}`, quip: AFTER[my % AFTER.length], mood: "after" });
++        }, 400);
++      }, Math.max(0.3, ask.seconds) * 1000);
++    };
++    (window as unknown as { __coachSing: (a: Ask) => void }).__coachSing = sing;
++
++    const onMessage = (e: MessageEvent) => {
++      if (e.origin !== location.origin || !e.data || typeof e.data !== "object") return;
++      const m = e.data as Record<string, unknown>;
++      if (m.type === "sing" && typeof m.midi === "number" && m.midi >= 24 && m.midi <= 96) {
++        sing({ midi: Math.round(m.midi), word: typeof m.word === "string" && m.word ? m.word : "la", seconds: typeof m.seconds === "number" ? m.seconds : 1.6, name: typeof m.name === "string" ? m.name : undefined });
++      } else if (m.type === "stop") {
++        turn++;
++        release();
++        setPending(null);
++      } else if (m.type === "idle") {
++        turn++;
++        release();
++        setPending(null);
++        setCaption({ line: "Chimera", quip: typeof m.text === "string" ? m.text : "Resting my vocal folds. They're made of maths.", mood: "wait" });
++      } else if (m.type === "body" && typeof m.body === "string" && (BODIES as string[]).includes(m.body)) {
++        useStore.getState().setBody(PRESETS[m.body as BodyName]);
++      } else if (m.type === "mute") {
++        setMuted(!!m.on);
++      }
++    };
++    window.addEventListener("message", onMessage);
++    tell("ready");
++    return () => {
++      window.removeEventListener("message", onMessage);
++      release();
++    };
++  }, []);
++
++  const start = async () => {
++    await useStore.getState().start();
++    if (!useStore.getState().started) return;
++    tell("started");
++    const ask = pending;
++    setPending(null);
++    if (ask) (window as unknown as { __coachSing: (a: Ask) => void }).__coachSing(ask);
++    else setCaption({ line: "Ready.", quip: "Warmed up. Waiting for the arm to play a note.", mood: "wait" });
++  };
++
++  return (
++    <div className="coach">
++      <AnatomyView3D readouts={false} showFormants={false} overlay={words} view={VIEW} />
++      <div className="coach-caption" data-mood={caption.mood}>
++        <p className="coach-line">{caption.line}</p>
++      </div>
++      <p className="coach-quip">{caption.quip}</p>
++      {!started && (
++        <button className="coach-start" type="button" onClick={() => void start()} disabled={starting}>
++          {starting ? "Clearing my throat…" : "Start Chimera"}
++          <small>sound needs one click</small>
++        </button>
++      )}
++      <button className="coach-mute" type="button" aria-pressed={muted} onClick={() => setMuted(!muted)} title="The head still sings, silently, so the microphone hears only you">
++        {muted ? "Muted" : "Sound on"}
++      </button>
++      <p className="coach-credit">
++        <a href="https://github.com/jamesondh/chimera-vocal-synth" target="_blank" rel="noreferrer">
++          Chimera
++        </a>{" "}
++        (MIT)
++      </p>
++    </div>
++  );
++}
++
++export function mountCoach(root: HTMLElement): void {
++  // console/debug handle, as in mount.tsx
++  (window as unknown as { __chimeraEngine: typeof engine }).__chimeraEngine = engine;
++  root.replaceChildren();
++  createRoot(root).render(
++    <StrictMode>
++      <Coach />
++    </StrictMode>,
++  );
++}
+diff --git a/src/ui/teacher/teacher.css b/src/ui/teacher/teacher.css
+new file mode 100644
+index 0000000..a2955f8
+--- /dev/null
++++ b/src/ui/teacher/teacher.css
+@@ -0,0 +1,147 @@
++/* The coach embed: the head fills the frame, words float over it. Colours and type are the piano
++   teacher's (so101-piano-teacher web/css/style.css), so the frame sits on its page as one piece. */
++html {
++  background: #fffcf5;
++}
++
++body.teacher {
++  --paper: #fffcf5;
++  --ink: #282b23;
++  --olive: #4b5039;
++  --muted: #797b6e;
++  --line: #e3dfd1;
++  --accent: #637747;
++  --warm: #d87827;
++  --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
++  --mono: ui-monospace, SFMono-Regular, monospace;
++  overflow: hidden;
++  background: var(--paper);
++  color: var(--ink);
++  font-family: var(--sans);
++  color-scheme: light;
++}
++
++body.teacher #root,
++.coach {
++  position: fixed;
++  inset: 0;
++}
++
++.coach-error {
++  padding: 24px;
++  color: #a94b36;
++}
++
++.coach-caption {
++  position: absolute;
++  left: 0;
++  right: 0;
++  top: 0;
++  padding: 12px 18px 0;
++  pointer-events: none;
++}
++
++.coach-line {
++  margin: 0;
++  font: 700 clamp(20px, 6vmin, 42px) / 1.05 var(--sans);
++  letter-spacing: -0.04em;
++  color: var(--olive);
++}
++
++.coach-caption[data-mood="sing"] .coach-line {
++  color: var(--accent);
++}
++
++.coach-caption[data-mood="after"] .coach-line {
++  color: var(--warm);
++}
++
++.coach-quip {
++  position: absolute;
++  left: 0;
++  right: 0;
++  bottom: 30px;
++  margin: 0;
++  padding: 18px 18px 4px;
++  pointer-events: none;
++  background: linear-gradient(rgba(255, 252, 245, 0), var(--paper) 45%);
++  font-size: clamp(11px, 2.6vmin, 16px);
++  line-height: 1.35;
++  color: var(--muted);
++}
++
++.coach-start {
++  position: absolute;
++  left: 50%;
++  bottom: 24%;
++  transform: translateX(-50%);
++  display: flex;
++  flex-direction: column;
++  align-items: center;
++  gap: 2px;
++  padding: 11px 20px;
++  border: 0;
++  border-radius: 9px;
++  background: var(--accent);
++  color: var(--paper);
++  font: 650 clamp(14px, 3.4vmin, 20px) var(--sans);
++  cursor: pointer;
++  box-shadow: 0 8px 24px rgba(64, 70, 45, 0.18);
++  animation: coach-pulse 1.6s ease-in-out infinite;
++}
++
++.coach-start small {
++  font: 500 0.55em var(--mono);
++  letter-spacing: 0.08em;
++  opacity: 0.8;
++}
++
++.coach-start:disabled {
++  animation: none;
++  cursor: progress;
++}
++
++@keyframes coach-pulse {
++  50% {
++    box-shadow: 0 0 0 6px rgba(99, 119, 71, 0.2);
++  }
++}
++
++@media (prefers-reduced-motion: reduce) {
++  .coach-start {
++    animation: none;
++  }
++}
++
++.coach-mute {
++  position: absolute;
++  right: 10px;
++  bottom: 8px;
++  padding: 3px 9px;
++  border: 1px solid #d8d4c6;
++  border-radius: 7px;
++  background: var(--paper);
++  color: var(--muted);
++  font: 500 10px var(--mono);
++  letter-spacing: 0.06em;
++  cursor: pointer;
++}
++
++.coach-mute[aria-pressed="true"] {
++  color: var(--warm);
++  border-color: var(--warm);
++}
++
++.coach-credit {
++  position: absolute;
++  left: 12px;
++  bottom: 10px;
++  margin: 0;
++  font: 9px var(--mono);
++  letter-spacing: 0.08em;
++  color: var(--muted);
++}
++
++.coach-credit a {
++  color: var(--accent);
++}
+diff --git a/teacher.html b/teacher.html
+new file mode 100644
+index 0000000..8197449
+--- /dev/null
++++ b/teacher.html
+@@ -0,0 +1,13 @@
++<!doctype html>
++<html lang="en">
++  <head>
++    <meta charset="UTF-8" />
++    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
++    <meta name="description" content="CHIMERA as a singing coach: the 3D head and throat sing a note on la, for another page to embed." />
++    <title>CHIMERA coach</title>
++  </head>
++  <body class="teacher">
++    <div id="root"></div>
++    <script type="module" src="/src/teacher.tsx"></script>
++  </body>
++</html>
+diff --git a/vite.teacher.config.ts b/vite.teacher.config.ts
+new file mode 100644
+index 0000000..0110dcc
+--- /dev/null
++++ b/vite.teacher.config.ts
+@@ -0,0 +1,20 @@
++// The coach embed (teacher.html) on its own: relative paths, so it can be copied into any folder
++// of another site and opened there (the piano teacher vendors it under web/chimera/).
++// Build: cargo build -p chimera-wasm --release --target wasm32-unknown-unknown, copy the wasm as
++// the `wasm` script does, then `vite build --config vite.teacher.config.ts`.
++import { defineConfig } from "vite";
++import react from "@vitejs/plugin-react";
++
++export default defineConfig({
++  base: "./",
++  plugins: [react()],
++  worker: { format: "es" },
++  build: {
++    target: "es2022",
++    outDir: "dist-teacher",
++    emptyOutDir: true,
++    chunkSizeWarningLimit: 1200,
++    rolldownOptions: { input: "teacher.html" },
++  },
++  server: { host: "127.0.0.1", port: 5319, strictPort: true },
++});

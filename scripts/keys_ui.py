@@ -47,6 +47,9 @@ TYPES = {
     ".svg": "image/svg+xml",
     ".stl": "application/octet-stream",
     ".urdf": "application/xml",
+    ".wasm": "application/wasm",  # web/chimera, the throat coach
+    ".woff2": "font/woff2",
+    ".otf": "font/otf",
 }
 NOTE_OF = {"do": 60, "re": 62, "mi": 64, "fa": 65, "sol": 67, "la": 69}
 NAMES = ("C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B")

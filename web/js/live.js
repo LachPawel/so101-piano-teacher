@@ -6,6 +6,7 @@
 // the arm is asked for and the pitch you sing, so you can sing along and see where you are. Nothing here
 // controls the rig, and the page makes no sound: the real piano plays.
 
+import { startChimera } from "./chimera.js";
 import { IN_TUNE_CENTS, noteName } from "./pitch.js";
 import { KEYS } from "./songs.js";
 
@@ -114,6 +115,7 @@ export function startLive(stage) {
   fit();
   window.addEventListener("resize", fit);
 
+  const coach = startChimera(); // the throat coach, an experiment: null with ?chimera=0
   let state = null;
   let readings = []; // the pitch heard, oldest first
   const targets = []; // the notes asked for over time: { from, to (null while asked), midi }
@@ -393,6 +395,7 @@ export function startLive(stage) {
   source.addEventListener("state", (event) => {
     const next = JSON.parse(event.data);
     react(state, next);
+    coach?.(state, next, next.phase === "feedback" ? verdict(next.sung?.cents ?? null).tone : "");
     state = next;
     render();
   });
