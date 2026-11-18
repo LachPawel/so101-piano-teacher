@@ -125,7 +125,8 @@ export function startChimera(onPitch = () => {}) {
   /** Follow the rig: called with each new state, and the verdict's tone in feedback. */
   return function follow(was, now, tone) {
     showing = SHOWN.has(now.phase) || ALONG.has(now.mode);
-    box.dataset.card = String(ALONG.has(now.mode));
+    const veil = document.getElementById("coach-veil");
+    if (veil) veil.dataset.on = String(ALONG.has(now.mode));
     show();
     const step = coachStep(sungFor, now);
     sungFor = step.sungFor;
