@@ -37,6 +37,7 @@ import sys
 import threading
 import time
 import traceback
+import wave
 from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import Any, Protocol
@@ -56,6 +57,7 @@ MODEL = "gpt-live-1"
 RATE = 16000  # one rate for the microphone, Voice Focus, SwiftF0 and GPT-Live-1
 BLOCK = 320  # 20 ms
 ENV_FILE = Path.home() / "code" / "codex" / ".env"
+CLIPS = Path(__file__).resolve().parent.parent / "outputs" / "keys_voice" / "sung"
 LESSON_NOTES = ["mi", "sol", "la"]  # the keys the policy presses most reliably
 PIANO_TAIL_S = 0.2  # the software piano dies away this fast once its key is up (keys_synth.RELEASE_HALF_S)
 CHECK_WORDS = {"check", "pitch", "tune", "listen", "hear"}  # "check my pitch", "am I in tune", "listen to me"
@@ -508,6 +510,22 @@ async def guard(work: Awaitable[None], name: str, done: asyncio.Event | None = N
             done.set()
 
 
+def keep_clip(note: str, audio: NDArray[np.float32], result: dict[str, Any]) -> None:
+    """Every judged clip, as a WAV with the verdict in its name, to check a surprising one afterwards."""
+    if "PYTEST_CURRENT_TEST" in os.environ:
+        return
+    with contextlib.suppress(OSError):
+        CLIPS.mkdir(parents=True, exist_ok=True)
+        cents = "none" if result["cents"] is None else f"{result['cents']:+.0f}c"
+        path = CLIPS / f"{time.strftime('%Y%m%d_%H%M%S')}_{note}_{cents}.wav"
+        pcm = (np.clip(audio, -1, 1) * 32767).astype("<i2").tobytes()
+        with wave.open(str(path), "wb") as f:
+            f.setnchannels(1)
+            f.setsampwidth(2)
+            f.setframerate(RATE)
+            f.writeframes(pcm)
+
+
 class Teacher:
     """Routes what GPT-Live-1 hands over to the arm and the pitch check, and reports back in words."""
 
@@ -619,6 +637,7 @@ class Teacher:
             return f"The piano kept ringing after {note}, so the singing could not be measured.", "Once more."
         sung = sung[cut[0] :]
         result = await asyncio.to_thread(keys_listen.check_note, sung, keys_listen.MIDI[note], RATE)
+        keep_clip(note, sung, result)
         emit("sung", note=note, cents=result["cents"], answer=result["answer"])
         if result["cents"] is None:
             return f"Nothing clear was heard for {note}.", result["answer"]
