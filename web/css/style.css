@@ -205,7 +205,9 @@ body.live { --live-scale: 1; }
 body.live .top, body.live .panel { zoom: var(--live-scale); }
 body.live main { grid-template-columns: minmax(0, 1fr) calc(312px * var(--live-scale)); gap: calc(28px * var(--live-scale)); padding-inline: calc(40px * var(--live-scale)); max-width: none; }
 body.live .top { max-width: none; padding-inline: 40px; }
-body.live .now.singing, body.live .now.ready { margin-inline: 0; }
+body.live .now.singing, body.live .now.ready { margin: 6px 0 4px; padding: 20px 22px 22px; }
+body.live .now.singing .label, body.live .now.ready .label { margin-bottom: 14px; }
+body.live .now.singing .countdown { margin-top: 16px; }
 body.live .stage-legend, body.live .hint { display: none; }
 body.live .stage canvas#stage { z-index: 0; }
 body.live .lane { z-index: 3; }
