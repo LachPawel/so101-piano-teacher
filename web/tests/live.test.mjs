@@ -2,7 +2,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { centsWords, headline, livePitch, verdict } from "../js/live.js";
+import { centsWords, foldTo, headline, livePitch, verdict } from "../js/live.js";
 
 test("the big words say whose turn it is", () => {
   assert.equal(headline({ phase: "idle" }).html, "Make a little<br>music.");
@@ -26,8 +26,15 @@ test("cents in words, with the teacher's tolerance", () => {
 });
 
 test("only a fresh reading counts as the pitch right now", () => {
-  const points = [[1.0, -40, 0.05], [1.05, null, 0.0], [1.1, 12, 0.05]];
-  assert.equal(livePitch(points, 1.2), 12);
-  assert.equal(livePitch(points, 2.0), null);
+  const readings = [[1.0, 63.6, 0.05, 0], [1.05, null, 0.0, 0], [1.1, 64.12, 0.05, 1]];
+  assert.deepEqual(livePitch(readings, 1.2), { midi: 64.12, piano: true });
+  assert.equal(livePitch(readings, 2.0), null);
+  assert.equal(livePitch([[1.0, null, 0, 0]], 1.0), null);
   assert.equal(livePitch([], 1), null);
+});
+
+test("a note sung an octave down still counts against the note asked for", () => {
+  assert.equal(foldTo(52.2, 64), 64.2);
+  assert.equal(foldTo(76, 64), 64);
+  assert.equal(foldTo(63.7, 64), 63.7);
 });

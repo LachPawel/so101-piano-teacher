@@ -8,6 +8,7 @@
       name="description"
       content="A robot arm that plays a MIDI keyboard and checks your singing. Runs in your browser."
     />
+    <link rel="icon" href="img/logo.svg" type="image/svg+xml" />
     <link rel="stylesheet" href="css/style.css" />
     <script type="importmap">
       { "imports": { "three": "./vendor/three.module.min.js" } }
@@ -16,7 +17,7 @@
   <body>
     <header class="top">
       <div>
-        <h1>SO-101 Piano Teacher</h1>
+        <h1><img class="logo" src="img/logo.svg" alt="" width="34" height="34" />SO-101 Piano Teacher</h1>
         <p class="tagline" id="tagline">A robot arm plays a note. You sing it back. It tells you if you are flat or sharp.</p>
       </div>
       <div class="chips live-only" aria-label="What the display is connected to">
@@ -35,6 +36,10 @@
     <main>
       <section class="stage" aria-label="Robot arm and keyboard">
         <canvas id="stage"></canvas>
+        <div class="lane live-only" id="lane" data-active="false">
+          <div class="lane-head"><span id="lane-word">Sing along</span><span id="lane-count"></span></div>
+          <div class="lane-plot"><canvas id="lane-canvas" role="img" aria-label="The notes the arm is asked for, and the pitch you sing, over the last seconds"></canvas></div>
+        </div>
         <p class="hint">Drag to look around. Keys 1 to 6 on your keyboard play the notes.</p>
       </section>
 
@@ -48,7 +53,6 @@
 
         <section class="card pitch-card">
           <p class="label">Your pitch</p>
-          <canvas class="trace live-only" id="trace" role="img" aria-label="Your pitch over the listening window, against the note"></canvas>
           <div class="meter" id="meter" aria-hidden="true">
             <div class="zone"></div>
             <div class="needle" id="needle"></div>

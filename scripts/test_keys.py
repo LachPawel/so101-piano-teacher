@@ -947,7 +947,7 @@ def test_voice_teacher_routes_requests_to_the_arm_and_the_pitch_check() -> None:
 
     class FakeAudio:
         def __init__(self) -> None:
-            self.said, self.sung, self.ringing = [], [], False
+            self.said, self.sung = [], []
 
         def say(self, audio: np.ndarray) -> None:
             self.said.append(audio)
@@ -958,18 +958,22 @@ def test_voice_teacher_routes_requests_to_the_arm_and_the_pitch_check() -> None:
         async def record(self, seconds: float, enough: object = None) -> np.ndarray:
             return self.sung.pop(0)
 
-        async def quiet(self) -> bool:
-            return not self.ringing
-
     class FakeArm:
         def __init__(self) -> None:
             self.asked: list[list[str]] = []
             self.wrong: dict[str, str] = {}
+            self.held = False  # a key the arm never let go of
 
-        def play(self, notes: list[str]) -> list[tuple[str, str | None]]:
+        def play(self, notes: list[str], on_sound: object = None) -> list[tuple[str, str | None]]:
             self.asked.append(notes)
             letters = keys_voice.keys_play.NOTE_LETTERS
+            for index in range(len(notes)):
+                if callable(on_sound):
+                    on_sound(index)
             return [(n, self.wrong.get(n, letters[n] + "4")) for n in notes]
+
+        def keys_down(self) -> set[int]:
+            return {64} if self.held else set()
 
         def close(self) -> None:
             pass
@@ -1031,9 +1035,10 @@ def test_voice_teacher_routes_requests_to_the_arm_and_the_pitch_check() -> None:
 
         # A piano that keeps ringing is never mistaken for singing: no measurement, one more go, then stop.
         await teacher.on_event({"type": "session.output_transcript.delta", "delta": "Ok."})
-        arm.asked, sent[:], audio.ringing = [], [], True
+        arm.asked, sent[:], arm.held = [], [], True
+        audio.sung = [np.zeros(16000, dtype=np.float32), np.zeros(16000, dtype=np.float32)]
         await user_says("check my pitch on la")
-        audio.ringing = False
+        arm.held = False
         assert arm.asked == [["la"], ["la"]]
         facts = [e["content"] for e in sent if e["type"] == "session.commentary.append"]
         assert (
@@ -1169,6 +1174,23 @@ def test_voice_teacher_routes_requests_to_the_arm_and_the_pitch_check() -> None:
         buffer.push(0.001 * np.ones(1600, dtype=np.float32))
     assert buffer.samples.size == 0
 
+    # A soft syllable that arrives just as the speaker ran dry is still played, not dropped.
+    buffer = keys_voice.SpeechBuffer()
+    buffer.push(word)
+    assert buffer.pull(10**6).size == 0  # under the cushion while more is still coming: wait
+    buffer.push(word)
+    assert buffer.pull(10**6).size == 3200
+    buffer.push(0.001 * np.ones(800, dtype=np.float32))
+    assert buffer.samples.size == 800
+
+    # The cartoon voice: 15 % faster on a stream, with no clicks where the chunks meet.
+    speed = keys_voice.Speedup(1.15)
+    tone = (0.2 * np.sin(2 * np.pi * 200 * np.arange(16000) / 16000)).astype(np.float32)
+    out = np.concatenate([speed(chunk) for chunk in np.array_split(tone, 37)])
+    assert out.size == pytest.approx(16000 / 1.15, abs=3)
+    assert np.max(np.abs(np.diff(out))) < 1.2 * np.max(np.abs(np.diff(tone))) * 1.15
+    assert keys_voice.Speedup(1.0)(tone) is tone
+
 
 def test_display_draws_the_sung_pitch_live_during_your_turn() -> None:
     import keys_listen
@@ -1187,21 +1209,29 @@ def test_display_draws_the_sung_pitch_live_during_your_turn() -> None:
     assert keys_ui.live_pitch(silence.pitch_hz, silence.confidence, 64) == (None, None)
     assert keys_ui.fold_cents(440.0, 69) == 0.0 and abs(keys_ui.fold_cents(220.0, 69)) < 1e-6
 
-    # The display keeps one trace per turn: a new turn starts it again, late readings of the old one are dropped.
+    # The display streams every reading, keeps the last seconds for a page opened late, and hands each
+    # open page only what it has not seen.
     hub = keys_ui.Hub()
-    hub.event({"kind": "phase", "name": "get_ready", "text": "Get ready", "note": "mi"})
-    assert hub.state["phase"] == "get_ready" and hub.state["asked"] == "mi"
+    hub.add_pitch(100.0, None, 0.001)
+    hub.add_pitch(100.05, 63.58, 0.05, piano=True)
+    with hub.cond:
+        newest, readings = hub.pitch_since(0)
+        assert readings == [[100.0, None, 0.001, 0], [100.05, 63.58, 0.05, 1]]
+        assert hub.pitch_since(newest) == (newest, [])
+    hub.add_pitch(100.0 + keys_ui.KEEP_PITCH_S + 1, 64.0, 0.05)
+    with hub.cond:
+        assert [r[0] for r in hub.pitch_since(0)[1]] == [100.0 + keys_ui.KEEP_PITCH_S + 1]
+
+    # A turn to sing, and the arm finishing while you already sing does not end it.
     hub.event({"kind": "your_turn", "note": "mi", "seconds": 6.0})
     turn = hub.state["turn"]
     assert turn["note"] == "mi" and turn["seconds"] == 6.0 and hub.state["phase"] == "your_turn"
-    hub.add_pitch(turn["t"], 0.5, None, 0.001, 0.0)
-    hub.add_pitch(turn["t"], 0.55, -42.26, 0.05, 0.05)
-    hub.add_pitch(turn["t"] - 9.0, 0.6, 10.0, 0.05, 0.1)
-    assert hub.trace == [[0.5, None, 0.001], [0.55, -42.3, 0.05]] and hub.state["voiced"] == 0.05
+    hub.event({"kind": "done"})
+    assert hub.state["phase"] == "your_turn"
     hub.event({"kind": "sung", "note": "mi", "cents": -40.0, "answer": "Well done."})
     assert hub.state["phase"] == "feedback" and "ended" in hub.state["turn"]
     hub.event({"kind": "your_turn", "note": "sol"})
-    assert hub.trace == [] and hub.state["turn"]["note"] == "sol" and hub.state["sung"] is None
+    assert hub.state["turn"]["note"] == "sol" and hub.state["sung"] is None
 
 
 def test_display_serves_the_3d_page_in_live_mode(tmp_path: Path) -> None:
@@ -1240,3 +1270,58 @@ def test_display_serves_the_3d_page_in_live_mode(tmp_path: Path) -> None:
         server.shutdown()
         server.server_close()
 
+
+def test_reachy_holds_the_saved_pose_while_the_arm_plays(tmp_path: Path) -> None:
+    import threading
+
+    import keys_reachy
+    import keys_ui
+
+    class FakeDaemon:
+        def __init__(self) -> None:
+            self.calls: list[tuple[str, dict]] = []
+
+        def pose(self) -> dict:
+            return {
+                "head": {"x": 0, "y": 0, "z": 0, "roll": 0, "pitch": 0.5, "yaw": 0.15},
+                "antennas": [-0.2, 0.2],
+            }
+
+        def goto(self, pose: dict, seconds: float) -> None:
+            self.calls.append(("goto", pose))
+
+        def target(self, head: dict, antennas: list) -> None:
+            self.calls.append(("target", {"head": head, "antennas": antennas}))
+
+    daemon = FakeDaemon()
+    saved = daemon.pose()
+    keys_reachy.POSE_FILE = tmp_path / "reachy_pose.json"
+    keys_reachy.save(daemon, keys_reachy.POSE_FILE)  # type: ignore[arg-type]
+    assert keys_reachy.load(keys_reachy.POSE_FILE) == saved
+
+    # Every mood stays close to the saved pose: Reachy keeps looking at the keys.
+    for mood in ("idle", "talk", "listen", "joy"):
+        for t in np.linspace(0, 10, 50):
+            head, antennas = keys_reachy.moved(saved, *keys_reachy.offsets(mood, float(t), 0.0))
+            assert (
+                abs(head["yaw"] - 0.15) <= 0.25
+                and abs(head["pitch"] - 0.5) <= 0.2
+                and abs(head["roll"]) <= 0.2
+            )
+            assert all(abs(a) <= 1.4 for a in antennas)
+
+    hub, stop = keys_ui.Hub(), threading.Event()
+    hub.event({"kind": "tune", "notes": ["mi"]})
+    assert hub.state["arm_busy"]
+    thread = threading.Thread(target=keys_reachy.follow, args=(hub, stop, daemon), daemon=True)
+    thread.start()
+    time.sleep(0.3)
+    assert [kind for kind, _ in daemon.calls] == ["goto"]  # the arm plays: back to the pose, and still
+    assert daemon.calls[0][1] == saved
+    hub.event({"kind": "done"})
+    assert not hub.state["arm_busy"]
+    time.sleep(keys_reachy.SETTLE_S + 0.3)
+    assert daemon.calls[-1][0] == "target"  # alive again once the arm has settled
+    stop.set()
+    thread.join(timeout=3)
+    assert daemon.calls[-1] == ("goto", saved)  # and left where the policy expects it

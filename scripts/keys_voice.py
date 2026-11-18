@@ -57,6 +57,7 @@ RATE = 16000  # one rate for the microphone, Voice Focus, SwiftF0 and GPT-Live-1
 BLOCK = 320  # 20 ms
 ENV_FILE = Path.home() / "code" / "codex" / ".env"
 LESSON_NOTES = ["mi", "sol", "la"]  # the keys the policy presses most reliably
+PIANO_TAIL_S = 0.2  # the software piano dies away this fast once its key is up (keys_synth.RELEASE_HALF_S)
 CHECK_WORDS = {"check", "pitch", "tune", "listen", "hear"}  # "check my pitch", "am I in tune", "listen to me"
 # Words that name a tune, as speech to text tends to deliver them. A tune counts even without "play".
 SONG_WORDS = {
@@ -80,7 +81,7 @@ Send = Callable[[dict[str, Any]], Awaitable[None]]
 INSTRUCTIONS = """You are Reachy, a small robot with the voice of a goofy cartoon sidekick: a lively, \
 over-excited male character with a silly, bouncy way of talking, who loves music and is very proud of his one \
 robot arm. Always sound excited and silly: a tiny joke, a sound effect or a cartoon exclamation in every \
-reply. Never answer with a bare fact or a single word. Keep every reply to one or two short sentences. Speak \
+reply, like "boop beep!", "woo-hoo!" or a little giggle. Talk with lots of energy and a big smile. Never answer with a bare fact or a single word. Keep every reply to one or two short sentences. Speak \
 English.
 
 Next to you a robot arm plays six piano keys: do, re, mi, fa, sol, la.
@@ -169,9 +170,13 @@ def understand(said: str, last_note: str, choose: Callable[[list[str]], str] = r
 # ------------------------------------------------------------------------------------------- hands
 
 
+OnSound = Callable[[int], None]  # told the index of each note the moment it sounds
+
+
 class Hands(Protocol):
-    def play(self, notes: list[str]) -> list[tuple[str, str | None]]:
-        """Play the notes in order. Returns (asked, the note that sounded or None) for each."""
+    def play(self, notes: list[str], on_sound: OnSound | None = None) -> list[tuple[str, str | None]]:
+        """Play the notes in order. Returns (asked, the note that sounded or None) for each. Returns once the
+        piano is silent again."""
 
     def close(self) -> None: ...
 
@@ -205,7 +210,7 @@ class PolicyHands:
                 out.append((t, n))
         return out
 
-    def play(self, notes: list[str]) -> list[tuple[str, str | None]]:
+    def play(self, notes: list[str], on_sound: OnSound | None = None) -> list[tuple[str, str | None]]:
         played: list[tuple[str, str | None]] = []
         emit("tune", notes=notes, policy=getattr(self, "label", ""))
         for index, note in enumerate(notes):
@@ -223,6 +228,8 @@ class PolicyHands:
             heard = [n for _, n in self.presses()[before:]][:1]
             played.append((note, note_name(heard[0]) if heard else None))
             emit("result", index=index, heard=played[-1][1])
+            if heard and on_sound is not None:
+                on_sound(index)
         # The policy only learned presses, so it leaves the finger on the key. Stop it, raise the shoulder a few
         # degrees, and wait there in the air: not back at the start pose. The next press then begins the way
         # the policy was trained, from above the previous key. A press after a trip home is its weakest.
@@ -262,7 +269,7 @@ class SpeakerHands:
     def __init__(self, audio: Audio) -> None:
         self.audio = audio
 
-    def play(self, notes: list[str]) -> list[tuple[str, str | None]]:
+    def play(self, notes: list[str], on_sound: OnSound | None = None) -> list[tuple[str, str | None]]:
         from keys_pitch_judge import midi_hz, reference_tone
 
         emit("tune", notes=notes, policy="no arm: speaker only")
@@ -270,6 +277,8 @@ class SpeakerHands:
             midi = keys_listen.MIDI[note]
             emit("ask", note=note, index=index)
             self.audio.say(reference_tone(midi_hz(midi), seconds=0.9, rate=RATE))
+            if on_sound is not None:
+                on_sound(index)
             time.sleep(1.0)
             emit("result", index=index, heard=note_name(midi))
         return [(note, note_name(keys_listen.MIDI[note])) for note in notes]
@@ -316,23 +325,61 @@ class SpeechBuffer:
 
     SILENT = 0.003  # RMS below this is silence: the stream's own quiet is faint noise, not always zero
     PAUSE_S = 0.4  # the longest silence kept between words
+    CUSHION_S = 0.15  # sound gathered before playing starts, so a late packet does not cut a word
 
     def __init__(self) -> None:
         self.samples = np.zeros(0, dtype=np.float32)
-        self._silence = 0.0
+        self._silence = self.PAUSE_S  # silence before the first word is dropped
+        self._playing = False
+        self._last_push = 0.0
 
     def push(self, audio: NDArray[np.float32]) -> None:
+        self._last_push = time.perf_counter()
         if audio.size and float(np.sqrt(np.mean(audio.astype(np.float64) ** 2))) > self.SILENT:
             self._silence = 0.0
         else:
-            if self.samples.size == 0 or self._silence >= self.PAUSE_S:
+            # Quiet inside speech (a soft syllable, a word's end, a short pause) is kept, even when it arrives
+            # just as the speaker ran dry: only silence longer than PAUSE_S is dropped.
+            if self._silence >= self.PAUSE_S:
                 return
             self._silence += audio.size / RATE
         self.samples = np.concatenate([self.samples, audio.astype(np.float32)])
 
     def pull(self, frames: int) -> NDArray[np.float32]:
+        if not self._playing:
+            # Wait for a cushion of sound first, unless no more is coming (the end of a short reply).
+            still_coming = time.perf_counter() - self._last_push < self.CUSHION_S
+            if self.samples.size < self.CUSHION_S * RATE and still_coming:
+                return np.zeros(0, dtype=np.float32)
+            self._playing = self.samples.size > 0
         take, self.samples = self.samples[:frames], self.samples[frames:]
+        if self.samples.size == 0:
+            self._playing = False
         return take
+
+
+class Speedup:
+    """Play speech faster and higher, like a cartoon: 1.15 is 15 % quicker and about 2.4 semitones up.
+    Works on a stream: the position between samples carries over from one chunk to the next."""
+
+    def __init__(self, factor: float) -> None:
+        self.factor = factor
+        self._tail = np.zeros(0, dtype=np.float32)
+        self._position = 0.0
+
+    def __call__(self, audio: NDArray[np.float32]) -> NDArray[np.float32]:
+        if self.factor == 1.0:
+            return audio
+        x = np.concatenate([self._tail, audio.astype(np.float32)])
+        if x.size < 2:
+            self._tail = x
+            return np.zeros(0, dtype=np.float32)
+        at = np.arange(self._position, x.size - 1, self.factor)
+        out = np.interp(at, np.arange(x.size), x).astype(np.float32)
+        following = float(at[-1] + self.factor) if at.size else self._position
+        keep = int(following)
+        self._tail, self._position = x[keep:], following - keep
+        return out
 
 
 class Audio:
@@ -364,9 +411,10 @@ class Audio:
             out[: take.size, 0] = take
             out[take.size :, 0] = 0.0
 
-        kwargs = {"samplerate": RATE, "channels": 1, "dtype": "float32", "blocksize": BLOCK}
-        self.input = sd.InputStream(device=mic, callback=on_input, **kwargs)
-        self.output = sd.OutputStream(device=speaker, callback=on_output, **kwargs)
+        kwargs = {"samplerate": RATE, "channels": 1, "dtype": "float32"}
+        self.input = sd.InputStream(device=mic, callback=on_input, blocksize=BLOCK, **kwargs)
+        # A roomier output buffer: with the policy busy on the same machine, tiny blocks run dry and click.
+        self.output = sd.OutputStream(device=speaker, callback=on_output, latency="high", **kwargs)
         self.input.start()
         self.output.start()
 
@@ -463,8 +511,11 @@ async def guard(work: Awaitable[None], name: str, done: asyncio.Event | None = N
 class Teacher:
     """Routes what GPT-Live-1 hands over to the arm and the pitch check, and reports back in words."""
 
-    def __init__(self, send: Send, hands: Hands, audio: Any, listen_s: float = 6.0) -> None:
+    def __init__(
+        self, send: Send, hands: Hands, audio: Any, listen_s: float = 6.0, voice_speed: float = 1.0
+    ) -> None:
         self.send, self.hands, self.audio, self.listen_s = send, hands, audio, listen_s
+        self.voice = Speedup(voice_speed)
         self.transcript = Transcript()
         self.last_note = LESSON_NOTES[0]  # what a bare "check my pitch" is about
         self.busy = False  # the arm is playing or the user is singing: GPT-Live-1 must not listen
@@ -474,7 +525,7 @@ class Teacher:
     async def on_event(self, event: dict[str, Any]) -> None:
         kind = event.get("type", "")
         if kind == "session.output_audio.delta":
-            self.audio.say(from_pcm(event["delta"]))
+            self.audio.say(self.voice(from_pcm(event["delta"])))
         elif kind == "session.input_transcript.delta":
             self.transcript.heard(event.get("delta", ""))
         elif kind == "session.output_transcript.delta":
@@ -538,18 +589,35 @@ class Teacher:
         await self.tell(delegation_id, describe(played))
 
     async def sing_back(self, note: str) -> tuple[str, str]:
-        """The arm plays a note, the user sings it, SwiftF0 measures it. Returns the fact and what to say."""
-        await asyncio.to_thread(self.hands.play, [note])
+        """The arm plays a note and the user sings along, holding it on after the piano stops. SwiftF0 measures
+        only the singing after the piano is silent: while it rings, the microphone hears the piano too.
+        Returns the fact and what to say."""
+        loop = asyncio.get_running_loop()
+        sounded = asyncio.Event()
+        playing = asyncio.ensure_future(
+            asyncio.to_thread(self.hands.play, [note], lambda _index: loop.call_soon_threadsafe(sounded.set))
+        )
+        waiting = asyncio.ensure_future(sounded.wait())
+        await asyncio.wait([playing, waiting], return_when=asyncio.FIRST_COMPLETED)
+        waiting.cancel()
         self.last_note = note
-        emit("phase", name="get_ready", text="Get ready", note=note)
-        if not await self.audio.quiet():  # the piano must be silent first, or it gets measured as the voice
+        # The window opens the moment the key sounds: sing along. Up to six seconds; it closes early once
+        # it has a second of clear voice after the piano.
+        start = time.perf_counter()
+        emit("your_turn", note=note, seconds=self.listen_s)
+        cut: list[int] = []  # samples at the start of the recording that hold the piano, known once it stops
+
+        def enough(audio: NDArray[np.float32]) -> bool:
+            return bool(cut) and keys_listen.voiced_seconds(audio[cut[0] :], RATE) >= 1.0
+
+        recording = asyncio.ensure_future(self.audio.record(self.listen_s, enough))
+        await playing  # returns once the key is up and the piano silent
+        cut.append(int((time.perf_counter() - start + PIANO_TAIL_S) * RATE))
+        sung = await recording
+        if getattr(self.hands, "keys_down", set)():  # a key still held keeps the piano ringing over the voice
             emit("sung", note=note, cents=None, answer="The piano was still ringing. Once more.")
             return f"The piano kept ringing after {note}, so the singing could not be measured.", "Once more."
-        emit("your_turn", note=note, seconds=self.listen_s)
-        # Up to six seconds to start singing; it stops listening once it has a second of clear voice.
-        sung = await self.audio.record(
-            self.listen_s, lambda audio: keys_listen.voiced_seconds(audio, RATE) >= 1.0
-        )
+        sung = sung[cut[0] :]
         result = await asyncio.to_thread(keys_listen.check_note, sung, keys_listen.MIDI[note], RATE)
         emit("sung", note=note, cents=result["cents"], answer=result["answer"])
         if result["cents"] is None:
@@ -631,7 +699,7 @@ async def run(args: argparse.Namespace) -> None:
         async def send(event: dict[str, Any]) -> None:
             await socket.send(json.dumps(event))
 
-        teacher = Teacher(send, hands, audio)
+        teacher = Teacher(send, hands, audio, voice_speed=args.cartoon)
         await send(
             {
                 "type": "session.start",
@@ -687,6 +755,12 @@ def main(argv: list[str] | None = None) -> None:
     )
     parser.add_argument(
         "--lift", type=float, default=4.0, help="Degrees the second servo rises after a note (0 to 25)"
+    )
+    parser.add_argument(
+        "--cartoon",
+        type=float,
+        default=1.15,
+        help="Play the teacher's voice this much faster and higher, for a cartoon voice (1 = as it comes)",
     )
     parser.add_argument("--no-voice-focus", dest="voice_focus", action="store_false")
     parser.add_argument(

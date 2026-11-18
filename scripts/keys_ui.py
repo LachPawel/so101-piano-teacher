@@ -54,6 +54,8 @@ NAMES = ("C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B")
 
 LIVE_WINDOW_S = 0.4  # the newest sound the live pitch is read from
 EDGE_FRAMES = 3  # SwiftF0's last few frames run off the end of the sound and are never sure
+PIANO_TAIL_S = 0.2  # the software piano dies away this fast once its key is up
+KEEP_PITCH_S = 15.0  # how much pitch history a newly opened page gets
 
 
 def midi_name(note: int) -> str:
@@ -64,6 +66,10 @@ def fold_cents(hz: float, target_midi: int) -> float:
     """Cents above (+) or below (-) the target, in whichever octave it was sung: -600 to 600."""
     cents = 1200 * np.log2(hz / (440.0 * 2 ** ((target_midi - 69) / 12)))
     return float((cents + 600) % 1200 - 600)
+
+
+def hz_to_midi(hz: float) -> float:
+    return float(69 + 12 * np.log2(hz / 440.0))
 
 
 def live_pitch(pitch_hz: Any, confidence: Any, target_midi: int) -> tuple[float | None, float | None]:
@@ -85,8 +91,11 @@ class Hub:
         self.version = 0
         self.ears: str | None = None
         self.ears_version = 0
-        self.trace: list[list[float | None]] = []  # this turn's sung pitch: [seconds, cents or None, level]
-        self.trace_turn = 0.0
+        # The pitch heard, always: [time, MIDI note as a float or None, level, 1 while the piano sounds else 0].
+        # While the piano sounds the microphone hears it too, so those readings may not be the voice.
+        self.pitch: list[tuple[int, list[float | None]]] = []  # (number, reading), oldest first
+        self.pitch_count = 0
+        self.piano_until = 0.0  # when the last key came up, plus the piano's tail
         self.state: dict[str, Any] = {
             "phase": "idle",
             "phase_text": "Ready",
@@ -99,7 +108,7 @@ class Hub:
             "teacher": "",
             "sung": None,
             "turn": None,
-            "voiced": 0.0,
+            "arm_busy": False,
             "mic_on": False,
             "keys_down": [],
             "press": None,
@@ -119,19 +128,19 @@ class Hub:
             self.ears_version += 1
             self.cond.notify_all()
 
-    def add_pitch(
-        self, turn: float, seconds: float, cents: float | None, level: float, voiced: float
-    ) -> None:
-        """One live reading of the sung pitch, for the turn that started at `turn`."""
+    def add_pitch(self, t: float, midi: float | None, level: float, piano: bool = False) -> None:
+        """One live reading of the pitch heard at time `t`."""
         with self.cond:
-            if turn != self.trace_turn:
-                return
-            self.trace.append(
-                [round(seconds, 3), None if cents is None else round(cents, 1), round(level, 4)]
-            )
-            self.state["voiced"] = round(voiced, 2)
-            self.version += 1
+            self.pitch_count += 1
+            reading = [round(t, 3), None if midi is None else round(midi, 3), round(level, 4), int(piano)]
+            self.pitch.append((self.pitch_count, reading))
+            while self.pitch and self.pitch[0][1][0] < t - KEEP_PITCH_S:
+                self.pitch.pop(0)
             self.cond.notify_all()
+
+    def pitch_since(self, number: int) -> tuple[int, list[list[float | None]]]:
+        """The readings after reading `number`, and the newest number. Call with the lock held."""
+        return self.pitch_count, [reading for n, reading in self.pitch if n > number]
 
     def event(self, event: dict[str, Any]) -> None:
         """One line from the rig: update the picture."""
@@ -140,7 +149,7 @@ class Hub:
             notes = list(event.get("notes", []))
             self.set(
                 queue=notes, index=-1, results=[None] * len(notes), policy=event.get("policy", ""),
-                phase="playing", phase_text="The arm plays", asked=None, sung=None, press=None,
+                phase="playing", phase_text="The arm plays", asked=None, sung=None, press=None, arm_busy=True,
             )  # fmt: skip
         elif kind == "ask":
             self.set(
@@ -148,6 +157,7 @@ class Hub:
                 asked=event.get("note"),
                 phase="playing",
                 phase_text="The arm plays",
+                arm_busy=True,
             )
         elif kind == "result":
             results = list(state["results"])
@@ -158,19 +168,19 @@ class Hub:
                 results[index] = {"heard": heard, "ok": right}
                 self.set(results=results)
         elif kind == "done":
-            self.set(phase="idle", phase_text="Done", asked=None)
+            if state["phase"] not in ("your_turn", "feedback"):  # the arm finishes while you already sing
+                self.set(phase="idle", phase_text="Done", asked=None, arm_busy=False)
+            else:
+                self.set(arm_busy=False)
         elif kind == "said":
             self.set(said=event.get("text", ""), teacher="", phase="thinking", phase_text="Understanding")
         elif kind == "teacher":
             self.set(teacher=(state["teacher"] + event.get("text", ""))[-400:])
         elif kind == "your_turn":
             started = time.time()
-            with self.cond:
-                self.trace, self.trace_turn = [], started
             self.set(
                 phase="your_turn", phase_text="Your turn: sing now", asked=event.get("note"), sung=None,
                 turn={"note": event.get("note"), "seconds": float(event.get("seconds", 6.0)), "t": started},
-                voiced=0.0,
             )  # fmt: skip
         elif kind == "sung":
             sung = {k: event.get(k) for k in ("note", "cents", "answer")}
@@ -179,8 +189,12 @@ class Hub:
                 turn = {**turn, "ended": round(time.time() - turn["t"], 2)}
             self.set(sung=sung, phase="feedback", phase_text="Feedback", turn=turn)
         elif kind == "phase":
+            name = event.get("name", "idle")
             self.set(
-                phase=event.get("name", "idle"), phase_text=event.get("text", ""), asked=event.get("note")
+                phase=name,
+                phase_text=event.get("text", ""),
+                asked=event.get("note"),
+                arm_busy=state["arm_busy"] or name == "loading",
             )
 
 
@@ -246,6 +260,8 @@ def follow_midi(hub: Hub, port_name: str) -> Any:
                 )
             elif msg.type in ("note_off", "note_on"):
                 down.discard(msg.note)
+                if not down:
+                    hub.piano_until = time.time() + PIANO_TAIL_S
                 hub.set(keys_down=sorted(down))
 
         opened = mido.open_input(port, callback=on_message)
@@ -299,7 +315,8 @@ def follow_ears(hub: Hub, device: str, stop: threading.Event) -> None:
 
 
 def follow_voice(hub: Hub, mic: str | None, stop: threading.Event) -> None:
-    """While it is the user's turn, read the pitch they sing about twenty times a second."""
+    """Read the pitch at the microphone twenty times a second, all the time: you can sing along with every
+    note the arm plays and see where you are."""
     try:
         import keys_listen
         import sounddevice as sd
@@ -316,38 +333,48 @@ def follow_voice(hub: Hub, mic: str | None, stop: threading.Event) -> None:
 
         with sd.InputStream(device=mic, channels=1, samplerate=rate, dtype="float32", callback=callback):
             hub.set(mic_on=True)
-            turn, voiced, last = 0.0, 0.0, time.time()
             while not stop.is_set():
                 time.sleep(0.05)
-                now, state = time.time(), hub.state
-                current = state["turn"]
-                if state["phase"] != "your_turn" or current is None or current.get("note") not in NOTE_OF:
-                    last = now
-                    continue
-                if current["t"] != turn:
-                    turn, voiced = current["t"], 0.0
                 with lock:
                     audio = ring.copy()
                 result = tracker.detect(audio, rate)
-                _hz, cents = live_pitch(result.pitch_hz, result.confidence, NOTE_OF[current["note"]])
-                if cents is not None:
-                    voiced += now - last
+                hz, _cents = live_pitch(result.pitch_hz, result.confidence, 69)
+                now = time.time()
+                piano = bool(hub.state["keys_down"]) or now < hub.piano_until
                 level = float(np.sqrt(np.mean(audio[-rate // 10 :] ** 2)))
-                hub.add_pitch(turn, now - turn, cents, level, voiced)
-                last = now
+                hub.add_pitch(now, None if hz is None else hz_to_midi(hz), level, piano)
     except (Exception, SystemExit) as error:  # noqa: BLE001  the display still works without the microphone
         print(f"No live pitch for the display ({type(error).__name__}: {error}).")
 
 
 def demo(hub: Hub, stop: threading.Event) -> None:
     """A made-up session, to see the display without the rig. It goes straight to this display only."""
+    hub.set(mic_on=True)
+    target: list[int | None] = [None]  # the note a made-up singer follows, a little late and a little flat
+
+    def voice() -> None:
+        start, sung = time.time(), 64.0
+        while not stop.is_set():
+            now = time.time()
+            if target[0] is not None:
+                sung += (target[0] - 0.2 - sung) * 0.18
+            singing = target[0] is not None and int((now - start) / 2.3) % 4 != 3  # breathes now and then
+            piano = bool(hub.state["keys_down"]) or now < hub.piano_until
+            wobble = 0.08 * np.sin(now * 33)
+            hub.add_pitch(now, sung + wobble if singing else None, 0.05 if singing else 0.002, piano)
+            time.sleep(0.05)
+
+    threading.Thread(target=voice, daemon=True).start()
 
     def show(kind: str, **data: Any) -> None:
         hub.event({"kind": kind, **data})
+        if kind == "ask":
+            target[0] = NOTE_OF[data["note"]]
 
     tune = ["mi", "mi", "fa", "sol", "sol", "fa", "mi", "re"]
     names = {"do": "C4", "re": "D4", "mi": "E4", "fa": "F4", "sol": "G4", "la": "A4"}
     while not stop.is_set():
+        target[0] = None
         show("phase", name="listening", text="Listening")
         time.sleep(1.5)
         show("said", text="play the first line of Ode to Joy", read_as="song")
@@ -361,27 +388,26 @@ def demo(hub: Hub, stop: threading.Event) -> None:
             hub.set(keys_down=[midi], press={"note": midi, "name": heard, "ok": index != 4, "t": time.time()})
             time.sleep(0.3)
             hub.set(keys_down=[])
+            hub.piano_until = time.time() + PIANO_TAIL_S
             show("result", index=index, heard=heard)
-            time.sleep(0.3)
+            time.sleep(0.5)
         show("done")
-        time.sleep(1.0)
-        show("phase", name="get_ready", text="Get ready", note="mi")
+        target[0] = None
         time.sleep(1.5)
-        show("your_turn", note="mi", seconds=6.0)
-        hub.set(mic_on=True)
-        turn, voiced = hub.trace_turn, 0.0
-        for step in range(64):  # a made-up voice: silence, a scoop up from far below, then nearly there
-            seconds = step * 0.05
-            cents = (
-                None
-                if seconds < 0.9
-                else -27 - 230 * np.exp(-(seconds - 0.9) * 2.2) + 9 * np.sin(seconds * 31)
-            )
-            voiced += 0.05 if cents is not None else 0.0
-            hub.add_pitch(turn, seconds, cents, 0.002 if cents is None else 0.05, min(voiced, 1.0))
-            time.sleep(0.05)
-        show("sung", note="mi", cents=-27.0, answer="Well done.")
+        show("tune", notes=["mi"], policy="flow+smooth+60hz (demo)")
+        show("ask", note="mi", index=0)
+        time.sleep(1.2)
+        hub.set(keys_down=[64], press={"note": 64, "name": "E4", "ok": True, "t": time.time()})
+        show("result", index=0, heard="E4")
+        show("your_turn", note="mi", seconds=6.0)  # the window opens as the key sounds: sing along
+        time.sleep(1.0)
+        hub.set(keys_down=[])
+        hub.piano_until = time.time() + PIANO_TAIL_S
+        show("done")
+        time.sleep(2.6)
+        show("sung", note="mi", cents=-20.0, answer="Well done.")
         show("teacher", text="You sang mi and were in tune. Well done.")
+        target[0] = None
         time.sleep(4.0)
 
 
@@ -419,28 +445,27 @@ def make_handler(hub: Hub, web: Path) -> type[BaseHTTPRequestHandler]:
             self.send_header("Content-Type", "text/event-stream")
             self.send_header("Cache-Control", "no-store")
             self.end_headers()
-            seen, seen_ears, seen_turn, seen_points = -1, -1, 0.0, 0
+            seen, seen_ears, seen_pitch = -1, -1, 0
             try:
                 while True:
                     with hub.cond:
                         hub.cond.wait_for(
-                            lambda seen=seen, seen_ears=seen_ears: (
-                                hub.version != seen or hub.ears_version != seen_ears
+                            lambda seen=seen, seen_ears=seen_ears, seen_pitch=seen_pitch: (
+                                hub.version != seen
+                                or hub.ears_version != seen_ears
+                                or hub.pitch_count != seen_pitch
                             ),
                             timeout=1.0,
                         )
                         state = json.dumps(hub.state) if hub.version != seen else None
                         ears = hub.ears if hub.ears_version != seen_ears else None
                         seen, seen_ears = hub.version, hub.ears_version
-                        if hub.trace_turn != seen_turn:
-                            seen_turn, seen_points = hub.trace_turn, 0
-                        points = hub.trace[seen_points:]
-                        seen_points += len(points)
+                        seen_pitch, points = hub.pitch_since(seen_pitch)
                     out = ": keep-alive\n\n"
                     if state:
                         out += f"event: state\ndata: {state}\n\n"
                     if points:
-                        out += f"event: pitch\ndata: {json.dumps({'turn': seen_turn, 'points': points})}\n\n"
+                        out += f"event: pitch\ndata: {json.dumps(points)}\n\n"
                     if ears:
                         out += f"event: ears\ndata: {ears}\n\n"
                     self.wfile.write(out.encode())
@@ -463,6 +488,12 @@ def main(argv: list[str] | None = None) -> None:
     )
     parser.add_argument("--demo", action="store_true", help="Show a made-up session, no rig needed")
     parser.add_argument("--web", help="The folder of the page (default: web/ of so101-piano-teacher)")
+    parser.add_argument(
+        "--reachy",
+        choices=["auto", "none"],
+        default="auto",
+        help="Move Reachy Mini's head between notes (keys_reachy.py). Off with --demo",
+    )
     args = parser.parse_args(argv)
     web = find_web(args.web)
 
@@ -475,6 +506,12 @@ def main(argv: list[str] | None = None) -> None:
         threading.Thread(target=follow_voice, args=(hub, args.mic, stop), daemon=True).start()
     if args.demo:
         threading.Thread(target=demo, args=(hub, stop), daemon=True).start()
+    reachy = None
+    if args.reachy == "auto" and not args.demo:
+        import keys_reachy
+
+        reachy = threading.Thread(target=keys_reachy.follow, args=(hub, stop), daemon=True)
+        reachy.start()
 
     try:
         server = ThreadingHTTPServer(("127.0.0.1", args.port), make_handler(hub, web))
@@ -493,6 +530,8 @@ def main(argv: list[str] | None = None) -> None:
         print()
     finally:
         stop.set()
+        if reachy is not None:
+            reachy.join(timeout=2.0)  # it puts the head back where the policy expects it
         if midi is not None:
             midi.close()
         server.server_close()

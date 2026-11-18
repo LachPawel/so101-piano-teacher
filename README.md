@@ -22,6 +22,7 @@ This is a hobby experiment, built at home on one rig. Expect rough edges.
 | `scripts/keys_listen.py` | SwiftF0 pitch tracking: is a sung note flat or sharp, and which notes are in a riff |
 | `scripts/keys_voice.py` | The voice teacher: say "play mi sol la" or "start the lesson", the policy plays, you sing back |
 | `scripts/keys_ui.py` | The stage display: serves `web/` live from the rig, the 3D arm follows the real one, your pitch live |
+| `scripts/keys_reachy.py` | Reachy Mini holds its saved head pose while the arm plays, and moves and wiggles otherwise |
 | `scripts/keys_rollout.py` | `lerobot-rollout` with a `/pause` command, so one loaded policy can play note after note |
 | `scripts/keys_pitch_judge.py` | A test of whether Gemini Decision 1 can judge pitch (it cannot) |
 | `scripts/keys_synth.py` | A small software piano for the MIDI keyboard, with a clean audio feed for the "ears" |
@@ -68,6 +69,9 @@ uv run --with-requirements scripts/requirements-keys.txt scripts/keys_ui.py
 ```bash
 uv run --with-requirements scripts/requirements-keys.txt --with aic-sdk==3.4.0 scripts/keys_voice.py --mic "MacBook Pro Microphone" --speaker "MacBook Pro Speakers"
 ```
+
+Once, with Reachy looking at the keys as in training: `scripts/keys_reachy.py save`. The display then
+holds that head pose while the arm plays and moves Reachy otherwise.
 
 Name the microphone and speaker: Bluetooth headphones that connect take over the Mac's defaults. The display
 needs no internet; `scripts/keys_ui.py --demo` shows a made-up session without the rig.
