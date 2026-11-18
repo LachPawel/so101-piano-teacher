@@ -1,10 +1,14 @@
 #!/usr/bin/env python
-"""The stage display: what the arm is asked to play, what it pressed, what it hears, what you sang.
+"""The stage display: the 3D page in web/, live from the rig.
 
     uv run --with-requirements scripts/requirements-keys.txt scripts/keys_ui.py
     uv run --with-requirements scripts/requirements-keys.txt scripts/keys_ui.py --demo    # no rig: a made-up tune
 
 Then open http://localhost:8770 and make the window full screen. Leave this running in its own tab.
+
+It serves the same page as the web demo (web/ in the so101-piano-teacher repository). Served from here, the
+page switches to live mode: the 3D arm aims at the note the policy is asked to play and presses the key MIDI
+hears, the big words say whose turn it is, and while you sing your pitch is drawn as you sing it.
 
 It only watches, it controls nothing:
   - the MIDI keyboard, for the keys that go down (instantly);
@@ -25,12 +29,25 @@ import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
+from urllib.parse import unquote, urlsplit
 
 import numpy as np
 from keys_ui_events import EVENTS
 
 ROOT = Path(__file__).resolve().parent.parent
-PAGE = Path(__file__).with_name("keys_ui.html")
+# The page: web/ next to scripts/ in the public repository, else that repository checked out beside this one.
+WEB_DIRS = (ROOT / "web", Path.home() / "code" / "so101-piano-teacher" / "web")
+TYPES = {
+    ".html": "text/html; charset=utf-8",
+    ".js": "text/javascript; charset=utf-8",  # module scripts load only with a JavaScript type
+    ".mjs": "text/javascript; charset=utf-8",
+    ".css": "text/css; charset=utf-8",
+    ".json": "application/json",
+    ".png": "image/png",
+    ".svg": "image/svg+xml",
+    ".stl": "application/octet-stream",
+    ".urdf": "application/xml",
+}
 NOTE_OF = {"do": 60, "re": 62, "mi": 64, "fa": 65, "sol": 67, "la": 69}
 NAMES = ("C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B")
 
@@ -165,6 +182,17 @@ class Hub:
             self.set(
                 phase=event.get("name", "idle"), phase_text=event.get("text", ""), asked=event.get("note")
             )
+
+
+def find_web(path: str | None) -> Path:
+    """The folder of the page: the one asked for, else the first of WEB_DIRS that has an index.html."""
+    for folder in [Path(path).expanduser()] if path else WEB_DIRS:
+        if (folder / "index.html").is_file():
+            return folder.resolve()
+    raise SystemExit(
+        f"No page to serve: no index.html in {path or ' or '.join(str(d) for d in WEB_DIRS)}.\n"
+        "Clone https://github.com/LachPawel/so101-piano-teacher next to this repository, or pass --web."
+    )
 
 
 def events_end() -> int:
@@ -357,19 +385,31 @@ def demo(hub: Hub, stop: threading.Event) -> None:
         time.sleep(4.0)
 
 
-def make_handler(hub: Hub) -> type[BaseHTTPRequestHandler]:
+def make_handler(hub: Hub, web: Path) -> type[BaseHTTPRequestHandler]:
     class Handler(BaseHTTPRequestHandler):
         def log_message(self, *_args: Any) -> None:  # keep the terminal quiet
             return
 
         def do_GET(self) -> None:  # noqa: N802  the name http.server calls
-            if self.path.split("?")[0] == "/events":
+            path = urlsplit(self.path).path
+            if path == "/events":
                 self.stream()
-                return
-            body = PAGE.read_bytes()
-            self.send_response(200)
-            self.send_header("Content-Type", "text/html; charset=utf-8")
-            self.send_header("Cache-Control", "no-store")
+            elif path == "/state":  # its answer is how the page knows it runs live
+                with hub.cond:
+                    body = json.dumps(hub.state).encode()
+                self.send(200, "application/json", body)
+            else:
+                file = (web / (unquote(path).lstrip("/") or "index.html")).resolve()
+                if not file.is_relative_to(web) or not file.is_file():
+                    self.send(404, "text/plain; charset=utf-8", b"Not found")
+                else:
+                    kind = TYPES.get(file.suffix.lower(), "application/octet-stream")
+                    self.send(200, kind, file.read_bytes())
+
+        def send(self, status: int, kind: str, body: bytes) -> None:
+            self.send_response(status)
+            self.send_header("Content-Type", kind)
+            self.send_header("Cache-Control", "no-cache")
             self.send_header("Content-Length", str(len(body)))
             self.end_headers()
             self.wfile.write(body)
@@ -422,7 +462,9 @@ def main(argv: list[str] | None = None) -> None:
         "--mic", default="MacBook Pro Microphone", help='The microphone you sing into, or "none"'
     )
     parser.add_argument("--demo", action="store_true", help="Show a made-up session, no rig needed")
+    parser.add_argument("--web", help="The folder of the page (default: web/ of so101-piano-teacher)")
     args = parser.parse_args(argv)
+    web = find_web(args.web)
 
     hub, stop = Hub(), threading.Event()
     threading.Thread(target=follow_events, args=(hub, stop, events_end()), daemon=True).start()
@@ -435,7 +477,7 @@ def main(argv: list[str] | None = None) -> None:
         threading.Thread(target=demo, args=(hub, stop), daemon=True).start()
 
     try:
-        server = ThreadingHTTPServer(("127.0.0.1", args.port), make_handler(hub))
+        server = ThreadingHTTPServer(("127.0.0.1", args.port), make_handler(hub, web))
     except OSError:
         stop.set()
         raise SystemExit(
@@ -444,7 +486,7 @@ def main(argv: list[str] | None = None) -> None:
         ) from None
     server.daemon_threads = True
     server.block_on_close = False  # open browser tabs must not keep Ctrl+C from stopping the display
-    print(f"Stage display: http://localhost:{args.port}   (Ctrl+C stops)")
+    print(f"Stage display: http://localhost:{args.port}   (Ctrl+C stops)   page: {web}")
     try:
         server.serve_forever()
     except KeyboardInterrupt:

@@ -1202,3 +1202,41 @@ def test_display_draws_the_sung_pitch_live_during_your_turn() -> None:
     assert hub.state["phase"] == "feedback" and "ended" in hub.state["turn"]
     hub.event({"kind": "your_turn", "note": "sol"})
     assert hub.trace == [] and hub.state["turn"]["note"] == "sol" and hub.state["sung"] is None
+
+
+def test_display_serves_the_3d_page_in_live_mode(tmp_path: Path) -> None:
+    import threading
+    import urllib.error
+    import urllib.request
+    from http.server import ThreadingHTTPServer
+
+    import keys_ui
+
+    web = tmp_path / "web"
+    (web / "js").mkdir(parents=True)
+    (web / "index.html").write_text("<!doctype html><title>page</title>")
+    (web / "js" / "main.js").write_text("export {};")
+    (tmp_path / "secret.txt").write_text("not for the browser")
+    assert keys_ui.find_web(str(web)) == web.resolve()
+    with pytest.raises(SystemExit):
+        keys_ui.find_web(str(tmp_path / "nowhere"))
+
+    hub = keys_ui.Hub()
+    server = ThreadingHTTPServer(("127.0.0.1", 0), keys_ui.make_handler(hub, web.resolve()))
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    base = f"http://127.0.0.1:{server.server_address[1]}"
+    try:
+        with urllib.request.urlopen(f"{base}/") as page:
+            assert b"<title>page</title>" in page.read()
+        with urllib.request.urlopen(f"{base}/js/main.js") as script:  # modules load only as JavaScript
+            assert script.headers["Content-Type"].startswith("text/javascript")
+        with urllib.request.urlopen(f"{base}/state") as state:  # the page's sign that it runs live
+            assert json.loads(state.read())["phase"] == "idle"
+        for path in ("/../secret.txt", "/%2e%2e/secret.txt", "/missing.js"):
+            with pytest.raises(urllib.error.HTTPError) as error:
+                urllib.request.urlopen(f"{base}{path}")
+            assert error.value.code == 404
+    finally:
+        server.shutdown()
+        server.server_close()
+

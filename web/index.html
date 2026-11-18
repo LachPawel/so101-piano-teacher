@@ -17,9 +17,15 @@
     <header class="top">
       <div>
         <h1>SO-101 Piano Teacher</h1>
-        <p class="tagline">A robot arm plays a note. You sing it back. It tells you if you are flat or sharp.</p>
+        <p class="tagline" id="tagline">A robot arm plays a note. You sing it back. It tells you if you are flat or sharp.</p>
       </div>
-      <div class="chips">
+      <div class="chips live-only" aria-label="What the display is connected to">
+        <span class="chip" id="live-midi">MIDI keyboard</span>
+        <span class="chip" id="live-ears">Robot's ears</span>
+        <span class="chip" id="live-mic">Microphone</span>
+        <span class="chip" id="live-link">Live</span>
+      </div>
+      <div class="chips static-only">
         <button id="sound" class="chip on" type="button" aria-pressed="true">Sound on</button>
         <button id="mic" class="chip" type="button" aria-pressed="false">Microphone off</button>
         <button id="midi" class="chip" type="button">Connect MIDI keyboard</button>
@@ -40,8 +46,9 @@
           <div class="countdown" id="countdown" hidden><i id="countdown-fill"></i><span id="countdown-text"></span></div>
         </section>
 
-        <section class="card">
+        <section class="card pitch-card">
           <p class="label">Your pitch</p>
+          <canvas class="trace live-only" id="trace" role="img" aria-label="Your pitch over the listening window, against the note"></canvas>
           <div class="meter" id="meter" aria-hidden="true">
             <div class="zone"></div>
             <div class="needle" id="needle"></div>
@@ -50,7 +57,27 @@
           <p class="reading" id="reading">Turn the microphone on to see your pitch.</p>
         </section>
 
-        <section class="card">
+        <section class="card ears-card live-only">
+          <p class="label">What the robot hears</p>
+          <div class="ears">
+            <img id="ears" alt="The last three seconds of sound as a spectrogram" hidden />
+            <p>The last 3 seconds of sound as a picture. It is the policy's second camera.</p>
+          </div>
+        </section>
+
+        <section class="card tune-card live-only">
+          <p class="label">Tune <span id="tune-tally" class="tally"></span></p>
+          <div class="tune-chips" id="tune-chips"><span class="muted">No tune yet.</span></div>
+          <p class="policy" id="tune-policy"></p>
+        </section>
+
+        <section class="card talk-card live-only">
+          <p class="label">Conversation</p>
+          <p class="said"><small>You</small><span id="said" class="muted">–</span></p>
+          <p class="said"><small>Teacher</small><span id="teacher" class="muted">–</span></p>
+        </section>
+
+        <section class="card play-card static-only">
           <p class="label">Play</p>
           <div class="notes" id="notes"></div>
           <div class="row">
@@ -64,7 +91,7 @@
           <label class="check"><input type="checkbox" id="midi-sound" /> Play sound for MIDI keyboard notes</label>
         </section>
 
-        <section class="card">
+        <section class="card log-card">
           <p class="label">Log <span id="tally" class="tally"></span></p>
           <ol class="log" id="log"></ol>
         </section>
@@ -72,7 +99,8 @@
     </main>
 
     <footer>
-      The arm here is simulated and follows a script. The real one runs a SmolVLA policy.
+      <span id="footer-note">The arm here is simulated and follows a script. The real one runs a SmolVLA policy.
+</span>
       <a href="https://github.com/LachPawel/so101-piano-teacher">Code and story on GitHub</a>
     </footer>
 

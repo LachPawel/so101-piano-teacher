@@ -20,12 +20,30 @@ Then open http://localhost:8765. It must be served, not opened as a file, becaus
 - **MIDI keyboard.** Connect a USB MIDI keyboard and its notes light the keys. The arm copies presses
   on the six sticker keys. This makes the page a live display next to the real robot.
 
+## Live mode: the stage display
+
+Served by `scripts/keys_ui.py` instead of a plain file server, the page shows the real rig instead of
+the buttons. `js/live.js` follows the events the rig streams:
+
+- The big words over the stage say whose turn it is: "The arm plays mi.", "Get ready to sing mi.",
+  "Sing mi now.", then the verdict.
+- The 3D arm glides over the note the policy is asked to play and presses the key MIDI hears.
+- While you sing: the listening window counts down, and your pitch is drawn live against the note.
+- What the robot hears (its spectrogram camera), the tune with right and wrong notes, and what you and
+  the teacher said.
+
+```bash
+uv run --with-requirements scripts/requirements-keys.txt scripts/keys_ui.py --demo   # no rig needed
+```
+
+Then open http://localhost:8770.
+
 ## What it is not
 
 - **Not a physics simulator.** The arm uses the official SO-101 meshes and joint frames, with
   scripted visual inverse kinematics. It cannot be used to train or test a policy.
 - **No learned policy and no voice model.** The real robot runs SmolVLA and a voice agent.
-- **Not connected to the real arm.** It only sees what the MIDI keyboard and the microphone tell it.
+- **Not connected to the real arm**, except in live mode, where it only shows what the rig reports.
 
 ## Browsers
 
@@ -34,7 +52,7 @@ Chrome and Edge for everything. Firefox and Safari work without the MIDI keyboar
 ## Tests
 
 ```bash
-node --test web/tests/pitch.test.mjs
+node --test web/tests/*.test.mjs
 ```
 
 The pitch code in `js/pitch.js` is a port of `sung_pitch` and `judge_pitch` in

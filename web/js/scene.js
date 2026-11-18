@@ -460,6 +460,26 @@ export class Stage {
     return this.chain;
   }
   get busy() { return this.queued > 0; }
+  /** Live mode: glide over a sticker key without pressing it, where the real arm is heading. */
+  aim(number) {
+    if (!keyByNumber(number)) return Promise.resolve();
+    this.queued++;
+    this.chain = this.chain.catch(() => {}).then(async () => {
+      await this.ready;
+      if (this.assetError) return;
+      if (this.tip.y < KEY_TOP + HOVER - 0.002) await this.moveTip(this.tip.clone().setY(KEY_TOP + HOVER), 90);
+      const hover = this.keyPoint(number, HOVER);
+      await this.moveTip(hover, 300 + 1300 * this.tip.distanceTo(hover));
+    }).finally(() => { this.queued--; });
+    return this.chain;
+  }
+  /** Live mode: a quick press of a sticker key the real arm just pressed, after whatever is queued. */
+  follow(number) {
+    if (!keyByNumber(number)) return Promise.resolve();
+    this.queued++;
+    this.chain = this.chain.catch(() => {}).then(() => this.pressOnce(number, null, true)).finally(() => { this.queued--; });
+    return this.chain;
+  }
 
   paint(entry) {
     const down = entry.depth > 0.04;

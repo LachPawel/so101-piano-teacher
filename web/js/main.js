@@ -2,6 +2,7 @@
 
 import { Microphone, playNote, wakeAudio } from "./audio.js";
 import { runLesson } from "./lesson.js";
+import { liveAvailable, startLive } from "./live.js";
 import { connectMidi, midiSupported } from "./midi.js";
 import { IN_TUNE_CENTS, centsFromTarget, hzToMidi, noteName } from "./pitch.js";
 import { Stage } from "./scene.js";
@@ -272,6 +273,12 @@ window.addEventListener("keydown", (event) => {
 
 setInterval(meter, 80);
 log("ready");
+
+// Served by scripts/keys_ui.py: show the real rig instead of the buttons.
+if (await liveAvailable()) {
+  state.running = "live"; // keys 1 to 6 no longer press the 3D arm
+  startLive(stage);
+}
 
 // For poking at the page from the browser console.
 window.pianoTeacher = { stage, mic, state, press, setTarget };
