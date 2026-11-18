@@ -985,7 +985,7 @@ def test_voice_teacher_routes_requests_to_the_arm_and_the_pitch_check() -> None:
             sent.append(event)
 
         audio, arm = FakeAudio(), FakeArm()
-        teacher = keys_voice.Teacher(send, arm, audio, listen_s=0.0)
+        teacher = keys_voice.Teacher(send, arm, audio, listen_s=0.0, rounds=1)
 
         async def user_says(text: str) -> None:
             await teacher.on_event({"type": "session.input_transcript.delta", "delta": text})
@@ -1018,17 +1018,27 @@ def test_voice_teacher_routes_requests_to_the_arm_and_the_pitch_check() -> None:
         assert arm.asked == [["mi"], ["mi"], ["sol"], ["la"]]
         facts = [e["content"] for e in sent if e["type"] == "session.commentary.append"]
         assert "cents flat. Tell them that, then: A little higher." in facts[1]
-        assert facts[2] == "The user sang mi and was in tune. Tell them that, then: Well done."
+        assert "Then cheer them on to try mi once more." in facts[1]
+        assert facts[2].startswith("The user sang mi and was in tune. Tell them that, then: Well done.")
+        assert "Then cheer them on for the next note, sol" in facts[2]
         assert facts[-1].startswith("The lesson is over: 3 of 3 notes in tune.")
+        assert "another round" in facts[-1]
+
+        # A plain "yes" to that offer starts the next round, in a new order.
+        await teacher.on_event({"type": "session.output_transcript.delta", "delta": "Again?"})
+        arm.asked, sent[:] = [], []
+        audio.sung = [kpj.sung_tone(hz(m), rng) for m in (57, 52, 55)]
+        await user_says("Yes!")
+        assert arm.asked == [["la"], ["mi"], ["sol"]]
 
         # "Check my pitch" is one note: the last one played, or the one named.
         await teacher.on_event({"type": "session.output_transcript.delta", "delta": "Done."})
         arm.asked, sent[:] = [], []
-        audio.sung = [kpj.sung_tone(hz(57.6), rng), kpj.sung_tone(hz(55), rng)]
-        await user_says("can you check my pitch")
+        audio.sung = [kpj.sung_tone(hz(55.6), rng), kpj.sung_tone(hz(55), rng)]
+        await user_says("can you check my pitch")  # the last note played: sol, from the last round
         await teacher.on_event({"type": "session.output_transcript.delta", "delta": "Ok."})
         await user_says("am I in tune on sol?")
-        assert arm.asked == [["la"], ["sol"]]
+        assert arm.asked == [["sol"], ["sol"]]
         facts = [e["content"] for e in sent if e["type"] == "session.commentary.append"]
         assert "cents sharp. Tell them that, then: A little lower." in facts[1]
         assert facts[3] == "The user sang sol and was in tune. Tell them that, then: Well done."
@@ -1172,10 +1182,28 @@ def test_voice_teacher_routes_requests_to_the_arm_and_the_pitch_check() -> None:
     buffer = keys_voice.SpeechBuffer()
     buffer.push(word)
     assert buffer.pull(10**6).size == 0  # under the cushion while more is still coming: wait
+    for _ in range(4):
+        buffer.push(word)
+    assert buffer.pull(10**6).size == 8000 and buffer.gaps == 1  # it ran dry mid-reply: a gap, then a refill
     buffer.push(word)
-    assert buffer.pull(10**6).size == 3200
+    assert buffer.pull(10**6).size == 0  # refilling: a quarter second first
+    buffer.push(word)
+    buffer.push(word)
+    assert buffer.pull(10**6).size == 4800
     buffer.push(0.001 * np.ones(800, dtype=np.float32))
     assert buffer.samples.size == 800
+
+    # A take with only a flicker of clear pitch is "not heard", not a wild number of cents.
+    import keys_pitch_judge as judge
+
+    noise = np.random.default_rng(1)
+    flicker = np.concatenate(
+        [judge.sung_tone(judge.midi_hz(57), noise, seconds=0.3), np.zeros(16000, np.float32)]
+    )
+    result, _ = keys_voice.judge_singing(flicker.astype(np.float32), "la")
+    assert result["cents"] is None
+    result, _ = keys_voice.judge_singing(judge.sung_tone(judge.midi_hz(57), noise), "la")
+    assert abs(result["cents"]) < 20
 
     # The cartoon voice: 15 % faster on a stream, with no clicks where the chunks meet.
     speed = keys_voice.Speedup(1.15)
