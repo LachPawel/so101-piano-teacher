@@ -1053,6 +1053,17 @@ def test_voice_teacher_routes_requests_to_the_arm_and_the_pitch_check() -> None:
         facts = [e["content"] for e in sent if e["type"] == "session.commentary.append"]
         assert facts[1] == "The user sang la and was in tune. Tell them that, then: Well done."
 
+        # Chimera shows first: the arm plays, the display's throat sings it, then the whole recording is the user.
+        await teacher.on_event({"type": "session.output_transcript.delta", "delta": "Ok."})
+        arm.asked, sent[:], teacher.show_s = [], [], 0.01
+        audio.sung = [kpj.sung_tone(hz(52), rng)]  # mi, an octave down
+        await user_says("check my pitch on mi")
+        teacher.show_s = 0.0
+        assert arm.asked == [["mi"]]
+        facts = [e["content"] for e in sent if e["type"] == "session.commentary.append"]
+        assert "Chimera on the screen shows how" in facts[0]
+        assert facts[1] == "The user sang mi and was in tune. Tell them that, then: Well done."
+
         await teacher.on_event({"type": "session.output_audio.delta", "delta": keys_voice.to_pcm(np.ones(4))})
         assert audio.said[-1] == pytest.approx(np.ones(4), abs=1e-3)
         await teacher.on_event({"type": "session.output_transcript.delta", "delta": "Bye."})

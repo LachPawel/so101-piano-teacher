@@ -426,12 +426,15 @@ def demo(hub: Hub, stop: threading.Event) -> None:
         time.sleep(1.2)
         hub.set(keys_down=[64], press={"note": 64, "name": "E4", "ok": True, "t": time.time()})
         show("result", index=0, heard="E4")
-        show("your_turn", note="mi", seconds=6.0)  # the window opens as the key sounds: sing along
         time.sleep(1.0)
         hub.set(keys_down=[])
         hub.piano_until = time.time() + PIANO_TAIL_S
         show("done")
+        # keys_voice.py --chimera-show 2.6: the 3D throat sings it first, then your window opens
+        show("phase", name="get_ready", text="Chimera shows how", note="mi")
         time.sleep(2.6)
+        show("your_turn", note="mi", seconds=6.0)
+        time.sleep(3.6)
         show("sung", note="mi", cents=-20.0, answer="Well done.")
         show("teacher", text="You sang mi and were in tune. Well done.")
         target[0] = None

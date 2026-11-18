@@ -605,8 +605,12 @@ class Teacher:
         voice_speed: float = 1.0,
         focus: VoiceFocus | None = None,
         rounds: int = 2,
+        show_s: float = 0.0,
     ) -> None:
         self.send, self.hands, self.audio, self.listen_s = send, hands, audio, listen_s
+        # Chimera shows first (web/chimera): after the arm, the display's 3D throat sings the note on la
+        # for this long, and only then does the user's window open, so the microphone never hears it. 0: off.
+        self.show_s = show_s
         self.voice = Speedup(voice_speed)
         self.focus = focus  # Voice Focus for the singing, apart from the one on the live microphone
         self.rounds = rounds  # rounds of three notes in one lesson, before asking "another one?"
@@ -704,6 +708,13 @@ class Teacher:
         await asyncio.wait([playing, waiting], return_when=asyncio.FIRST_COMPLETED)
         waiting.cancel()
         self.last_note = note
+        if self.show_s > 0:
+            await playing  # the whole note, then Chimera sings it on the display, then the user
+            emit("phase", name="get_ready", text="Chimera shows how", note=note)
+            await asyncio.sleep(self.show_s)
+            emit("your_turn", note=note, seconds=self.listen_s)
+            sung = await self.audio.record(self.listen_s, lambda audio: keys_listen.voiced_seconds(audio, RATE) >= HOLD_S)
+            return await self.judged(note, sung)
         # The window opens the moment the key sounds: sing along. Up to nine seconds; it closes early once
         # it has HOLD_S of clear voice after the piano.
         start = time.perf_counter()
@@ -719,6 +730,10 @@ class Teacher:
         quiet = min(time.perf_counter(), start + HELD_QUIET_S) - start + PIANO_TAIL_S
         cut.append(int(quiet * RATE))
         sung = (await recording)[cut[0] :]
+        return await self.judged(note, sung)
+
+    async def judged(self, note: str, sung: NDArray[np.float32]) -> tuple[str, str]:
+        """The fact and what to say, for what the user sang of `note`."""
         result, voice = await asyncio.to_thread(judge_singing, sung, note, self.focus)
         keep_clip(note, sung, result)
         if self.focus is not None:
@@ -732,10 +747,13 @@ class Teacher:
         )
         return f"The user sang {note} and was {where}.", result["answer"]
 
+    def shown(self) -> str:
+        return "Chimera on the screen shows how on la, then " if self.show_s > 0 else "then "
+
     async def check(self, delegation_id: str | None, note: str) -> None:
         """One note, on request: "check my pitch", "am I in tune on sol"."""
         await self.audio.finished_speaking(starts_within=1.5)  # let its own "On it!" finish first
-        await self.tell(delegation_id, f"Tell the user: the arm plays {note}, then they sing it back on la.")
+        await self.tell(delegation_id, f"Tell the user: the arm plays {note}, {self.shown()}they sing it back on la.")
         await self.audio.finished_speaking()
         for attempt in (1, 2):  # a second go when nothing was heard, while the teacher's ears stay closed
             fact, answer = await self.sing_back(note)
@@ -753,7 +771,13 @@ class Teacher:
         await self.tell(
             delegation_id,
             f"Start the lesson like a strict coach. Tell the user: the arm plays a note, starting with "
-            f"{rounds[0][0]}; as soon as they hear it they sing along on la and hold it. Name no other note.",
+            f"{rounds[0][0]}; "
+            + (
+                "then Chimera, the throat on the screen, sings it on la to show how; then they sing it back on la and hold it. "
+                if self.show_s > 0
+                else "as soon as they hear it they sing along on la and hold it. "
+            )
+            + "Name no other note.",
         )
         await self.audio.finished_speaking()
         in_tune = total = 0
@@ -840,7 +864,7 @@ async def run(args: argparse.Namespace) -> None:
         async def send(event: dict[str, Any]) -> None:
             await socket.send(json.dumps(event))
 
-        teacher = Teacher(send, hands, audio, voice_speed=args.cartoon, focus=focus)
+        teacher = Teacher(send, hands, audio, voice_speed=args.cartoon, focus=focus, show_s=args.chimera_show)
         await send(
             {
                 "type": "session.start",
@@ -907,6 +931,13 @@ def main(argv: list[str] | None = None) -> None:
         help="Play the teacher's voice this much faster and higher, for a cartoon voice (1 = as it comes)",
     )
     parser.add_argument("--no-voice-focus", dest="voice_focus", action="store_false")
+    parser.add_argument(
+        "--chimera-show",
+        type=float,
+        default=0.0,
+        metavar="SECONDS",
+        help="After the arm, the display's 3D throat (web/chimera) sings the note this long before you sing (try 2.6; 0 = off)",
+    )
     parser.add_argument(
         "--full-duplex",
         action="store_true",

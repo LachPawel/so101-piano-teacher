@@ -25,7 +25,7 @@ Then open http://localhost:8765. It must be served, not opened as a file, becaus
 Served by `scripts/keys_ui.py` instead of a plain file server, the page shows the real rig instead of
 the buttons. `js/live.js` follows the events the rig streams:
 
-- The big words over the stage say whose turn it is: "The arm plays mi.", "Get ready to sing mi.",
+- The big words over the stage say whose turn it is: "The arm plays mi.", "Watch, then sing mi." (Chimera shows how),
   "Sing mi now.", then the verdict.
 - The 3D arm glides over the note the policy is asked to play and presses the key MIDI hears.
 - While you sing: the listening window counts down, and your pitch is drawn live against the note.

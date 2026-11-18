@@ -30,3 +30,16 @@ cp target/wasm32-unknown-unknown/release/chimera_wasm.wasm src/wasm/chimera.wasm
 npx vite build --config vite.teacher.config.ts
 rsync -a --delete --exclude data --exclude README.md --exclude LICENSE --exclude source dist-teacher/ /path/to/web/chimera/
 ```
+
+## Chimera shows first
+
+With `keys_voice.py --chimera-show 2.6` the lesson goes: the arm plays the note, the display shows
+"Watch, then sing mi." while Chimera sings it on la, and only then does your listening window open. The
+microphone never hears Chimera. Without the flag the window opens as the key sounds (sing along), and
+Chimera sings inside it, where the microphone can hear it: use its Mute button then.
+
+## Sound on another speaker
+
+Chimera plays through the browser, so through the Mac's sound output: pick the speaker there (for
+example a JBL Flip 7). The teacher's voice goes where `keys_voice.py --speaker` says, for example
+`--speaker "JBL Flip 7"` (default: Reachy Mini's speaker when plugged in, else the system output).

@@ -59,7 +59,7 @@ export function headline(state) {
     case "playing":
       return note ? { html: `The arm<br>plays ${note}.`, tone: "arm" } : { html: "The arm<br>plays.", tone: "arm" };
     case "get_ready":
-      return { html: `Get ready<br>to sing ${note ?? ""}.`, tone: "ready" };
+      return { html: `Watch, then<br>sing ${note ?? ""}.`, tone: "ready" };
     case "your_turn":
       return { html: `Sing ${note ?? ""}<br>now.`, tone: "sing" };
     case "feedback": {
@@ -245,6 +245,8 @@ export function startLive(stage) {
       } else word = s.mic_on ? `Sing ${s.asked} now` : "No microphone";
     } else if (s.phase === "playing" && goal !== null) {
       word = `Listen to ${s.asked}`;
+    } else if (s.phase === "get_ready" && goal !== null) {
+      word = `Watch the throat sing ${s.asked}`;
     } else if (s.phase === "feedback") {
       word = verdict(s.sung?.cents ?? null).word;
       mood = verdict(s.sung?.cents ?? null).tone === "ok" ? "good" : "off";
