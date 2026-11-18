@@ -1,0 +1,7 @@
+# Largo from the New World Symphony, "Goin' Home" (Dvorak, 1893, public domain) for stickers 1 to 6
+# on six neighbouring white keys: 1 C  2 D  3 E  4 F  5 G  6 A.  '-' holds a key a beat.
+# A slow tune by nature: it still sounds like itself at two or three seconds a note.
+3 5 5 - 3 2 1 - 2 3 5 3 2 - - -
+3 5 5 - 3 2 1 - 2 3 2 1 1 - - -
+3 5 5 - 3 2 1 - 2 3 5 3 2 - - -
+3 5 5 - 3 2 1 - 2 3 2 1 1 - - -

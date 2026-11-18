@@ -1,0 +1,7 @@
+# Dies irae (medieval chant, 13th century, public domain) for stickers 1 to 6 on six neighbouring
+# white keys: 1 C  2 D  3 E  4 F  5 G  6 A.  '-' holds a key a beat.
+# Chant is slow and even by nature. The dark tune quoted in many film scores.
+4 3 4 2 3 1 2 2 - -
+4 4 5 4 3 2 1 3 4 3 2 2 - -
+4 3 4 2 3 1 2 2 - -
+4 4 5 4 3 2 1 3 4 3 2 2 - -

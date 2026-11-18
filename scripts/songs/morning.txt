@@ -1,0 +1,7 @@
+# Morning Mood from Peer Gynt (Grieg, 1875, public domain) for stickers 1 to 6 on six neighbouring
+# white keys: 1 C  2 D  3 E  4 F  5 G  6 A.  '-' holds a key a beat.
+# Opens on sol, never repeats a key, and uses only small steps: easy for the arm.
+5 3 2 1 2 3 5 3 2 1 2 3
+5 3 5 6 3 6 5 3 2 1 - -
+5 3 2 1 2 3 5 3 2 1 2 3
+5 3 5 6 3 6 5 3 2 1 - -

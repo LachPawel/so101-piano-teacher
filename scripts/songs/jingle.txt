@@ -1,0 +1,6 @@
+# Jingle Bells, chorus (James Pierpont, 1857, public domain) for stickers 1 to 6 on six neighbouring
+# white keys: 1 C  2 D  3 E  4 F  5 G  6 A.  '-' holds a key a beat.
+3 3 3 - 3 3 3 - 3 5 1 2 3 - - -
+4 4 4 4 4 3 3 3 3 2 2 3 2 - 5 -
+3 3 3 - 3 3 3 - 3 5 1 2 3 - - -
+4 4 4 4 4 3 3 3 5 5 4 2 1 - - -

@@ -88,6 +88,14 @@ def arm_keys(notes: list[Heard]) -> list[str]:
     return [note.key for note in notes if note.key]
 
 
+def voiced_seconds(audio: NDArray[np.float32], rate: int = RATE) -> float:
+    """How much of the audio holds a clear pitch: a voice singing, as opposed to breath, speech gaps or silence."""
+    if audio.size < rate // 4:
+        return 0.0
+    result = tracker().detect(np.ascontiguousarray(audio, dtype=np.float32), rate)
+    return float(np.count_nonzero(result.confidence >= 0.5) * 0.016)
+
+
 def check_note(audio: NDArray[np.float32], target_midi: int, rate: int = RATE) -> dict[str, Any]:
     """One sung note against a target: cents off (any octave), the verdict, and how much the pitch wobbled."""
     result = tracker().detect(np.ascontiguousarray(audio, dtype=np.float32), rate)

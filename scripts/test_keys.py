@@ -935,3 +935,270 @@ def test_listen_names_the_notes_of_a_riff_and_checks_a_sung_note() -> None:
     assert keys_listen.check_note(kpj.sung_tone(kpj.midi_hz(64), rng), 64)["answer"] == "Well done."
     silent = keys_listen.check_note(np.zeros(32000, dtype=np.float32), 64)
     assert silent["cents"] is None and "did not hear" in silent["answer"]
+
+
+def test_voice_teacher_routes_requests_to_the_arm_and_the_pitch_check() -> None:
+    pytest.importorskip("swift_f0")
+    import asyncio
+
+    import keys_voice
+
+    rng = np.random.default_rng(0)
+
+    class FakeAudio:
+        def __init__(self) -> None:
+            self.said, self.sung, self.ringing = [], [], False
+
+        def say(self, audio: np.ndarray) -> None:
+            self.said.append(audio)
+
+        async def finished_speaking(self, starts_within: float = 0.0) -> None:
+            return None
+
+        async def record(self, seconds: float, enough: object = None) -> np.ndarray:
+            return self.sung.pop(0)
+
+        async def quiet(self) -> bool:
+            return not self.ringing
+
+    class FakeArm:
+        def __init__(self) -> None:
+            self.asked: list[list[str]] = []
+            self.wrong: dict[str, str] = {}
+
+        def play(self, notes: list[str]) -> list[tuple[str, str | None]]:
+            self.asked.append(notes)
+            letters = keys_voice.keys_play.NOTE_LETTERS
+            return [(n, self.wrong.get(n, letters[n] + "4")) for n in notes]
+
+        def close(self) -> None:
+            pass
+
+    async def scenario() -> None:
+        sent: list[dict] = []
+
+        async def send(event: dict) -> None:
+            sent.append(event)
+
+        audio, arm = FakeAudio(), FakeArm()
+        teacher = keys_voice.Teacher(send, arm, audio, listen_s=0.0)
+
+        async def user_says(text: str) -> None:
+            await teacher.on_event({"type": "session.input_transcript.delta", "delta": text})
+            await teacher.on_event({"type": "session.delegation.created", "delegation": {"id": "d1"}})
+            await asyncio.gather(*teacher._tasks)
+
+        await user_says("Reachy, please play mi sol la")
+        assert arm.asked == [["mi", "sol", "la"]]
+        assert [e["type"] for e in sent] == [
+            "session.input_audio.mute",
+            "session.commentary.append",
+            "session.input_audio.unmute",
+        ]
+        assert "every note on the right key" in sent[1]["content"] and sent[1]["delegation_id"] == "d1"
+        assert not teacher.busy
+
+        # The teacher answered, so the next words start a new request; a wrong key is reported honestly.
+        await teacher.on_event({"type": "session.output_transcript.delta", "delta": "Here you go."})
+        arm.wrong, sent[:] = {"mi": "F4"}, []
+        await user_says("play largo")
+        assert arm.asked[-1][:3] == ["mi", "sol", "sol"]
+        assert "mi came out as F4" in sent[1]["content"]
+
+        # The lesson: mi is sung 70 cents flat, then in tune; sol and la in tune first time.
+        await teacher.on_event({"type": "session.output_transcript.delta", "delta": "Oops."})
+        arm.wrong, arm.asked, sent[:] = {}, [], []
+        hz = kpj.midi_hz
+        audio.sung = [kpj.sung_tone(hz(m), rng) for m in (51.3, 52, 55, 57)]  # an octave below the keys
+        await user_says("let's start the lesson")
+        assert arm.asked == [["mi"], ["mi"], ["sol"], ["la"]]
+        facts = [e["content"] for e in sent if e["type"] == "session.commentary.append"]
+        assert "cents flat. Tell them that, then: A little higher." in facts[1]
+        assert facts[2] == "The user sang mi and was in tune. Tell them that, then: Well done."
+        assert facts[-1].startswith("The lesson is over: 3 of 3 notes in tune.")
+
+        # "Check my pitch" is one note: the last one played, or the one named.
+        await teacher.on_event({"type": "session.output_transcript.delta", "delta": "Done."})
+        arm.asked, sent[:] = [], []
+        audio.sung = [kpj.sung_tone(hz(57.6), rng), kpj.sung_tone(hz(55), rng)]
+        await user_says("can you check my pitch")
+        await teacher.on_event({"type": "session.output_transcript.delta", "delta": "Ok."})
+        await user_says("am I in tune on sol?")
+        assert arm.asked == [["la"], ["sol"]]
+        facts = [e["content"] for e in sent if e["type"] == "session.commentary.append"]
+        assert "cents sharp. Tell them that, then: A little lower." in facts[1]
+        assert facts[3] == "The user sang sol and was in tune. Tell them that, then: Well done."
+
+        # A piano that keeps ringing is never mistaken for singing: no measurement, one more go, then stop.
+        await teacher.on_event({"type": "session.output_transcript.delta", "delta": "Ok."})
+        arm.asked, sent[:], audio.ringing = [], [], True
+        await user_says("check my pitch on la")
+        audio.ringing = False
+        assert arm.asked == [["la"], ["la"]]
+        facts = [e["content"] for e in sent if e["type"] == "session.commentary.append"]
+        assert (
+            facts[1]
+            == facts[2]
+            == (
+                "The piano kept ringing after la, so the singing could not be measured. Tell them that, then: Once more."
+            )
+        )
+
+        await teacher.on_event({"type": "session.output_audio.delta", "delta": keys_voice.to_pcm(np.ones(4))})
+        assert audio.said[-1] == pytest.approx(np.ones(4), abs=1e-3)
+        await teacher.on_event({"type": "session.output_transcript.delta", "delta": "Bye."})
+        await user_says("okay stop")
+        assert teacher.done.is_set()
+
+    asyncio.run(scenario())
+
+    # Loose requests, as speech to text really delivered them.
+    first = lambda songs: songs[0]  # noqa: E731
+    understand = lambda said: keys_voice.understand(said, "mi", first)  # noqa: E731
+    assert (understand("Barcom. Largo").kind, understand("Barcom. Largo").song) == ("song", "largo")
+    assert understand("Just play some um, some anything").song == "largo"
+    assert understand("play something by Beethoven").song == "ode"
+    assert understand("jingle bells please").song == "jingle"
+    assert understand("play mi sol la").keys == [3, 5, 6]
+    assert (
+        understand("can you check my pitch on sol").note == "sol" and understand("am I in tune").note == "mi"
+    )
+    assert understand("let's start the lesson").kind == "teach" and understand("ok stop").kind == "stop"
+    assert understand("how are you today").kind == "unknown"
+    assert understand("Can you play me? Play me. Play sol").keys == [5]  # only the last try counts
+    assert understand("play me sol la").keys == [5, 6] and understand("play me").keys == [3]
+    assert understand("Can you play a sol").keys == [5] and understand("play the la").keys == [6]
+    assert understand("can you also listen to my, help me sing, with notes and pitch").kind == "teach"
+    assert understand("check my singing").kind == "check" and understand("how is my pitch").kind == "check"
+    assert keys_voice.keys_listen.voiced_seconds(kpj.sung_tone(kpj.midi_hz(52), rng)) > 1.0
+    assert keys_voice.keys_listen.voiced_seconds(np.zeros(32000, dtype=np.float32)) == 0.0
+
+    # After a note the arm is paused and raised, not sent home.
+    class Midi:
+        events: list[tuple[float, int, int]] = []
+
+    class Stdin:
+        lines: list[str] = []
+
+        def write(self, line: str) -> None:
+            self.lines.append(line.strip())
+            if line.startswith("/subtask"):
+                Midi.events += [(0.0, 64, 90)]  # the key goes down at once
+            if line.strip() == "/pause 3":
+                Midi.events += [(0.2, 64, 0)]  # and only comes up after one extra raise
+
+        def flush(self) -> None:
+            pass
+
+    class Process:
+        stdin = Stdin()
+
+        def poll(self) -> None:
+            return None
+
+    hands = keys_voice.PolicyHands.__new__(keys_voice.PolicyHands)
+    hands.midi, hands.process, hands.first, hands.lift_deg = Midi(), Process(), True, 8.0
+    assert hands.play(["mi"]) == [("mi", "E4")]
+    assert Stdin.lines == ["/subtask play mi, the third key", "/start", "/pause 8", "/pause 3"]
+    assert hands.keys_down() == set()
+
+    # /pause ends the run where the arm is: the same flags as a reset, without the reset itself.
+    import threading
+
+    import keys_rollout
+
+    class Inference:
+        paused = False
+
+        def pause(self) -> None:
+            self.paused = True
+
+    controller = argparse.Namespace(
+        _control_lock=threading.Lock(),
+        _stopped=threading.Event(),
+        _stop_requested=threading.Event(),
+        _start_requested=threading.Event(),
+        _reset_requested=threading.Event(),
+        _segment_stop=threading.Event(),
+        _wake=threading.Event(),
+        _ctx=argparse.Namespace(policy=argparse.Namespace(inference=Inference())),
+    )
+    controller._start_requested.set()
+    assert keys_rollout.pause(controller)
+    assert (
+        controller._segment_stop.is_set()
+        and controller._wake.is_set()
+        and controller._ctx.policy.inference.paused
+    )
+    assert not controller._start_requested.is_set() and not controller._reset_requested.is_set()
+    controller._stopped.set()
+    assert not keys_rollout.pause(controller)
+    keys_rollout.add_pause_command()  # the session class accepts the patch
+
+    # The raise turns only the second servo, towards "up" (negative), and never more than 25 degrees.
+    class Robot:
+        sent: list[dict[str, float]] = []
+
+        def get_observation(self) -> dict[str, float]:
+            return {"shoulder_pan.pos": 3.0, "shoulder_lift.pos": -20.0, "elbow_flex.pos": 40.0, "front": 0.0}
+
+        def send_action(self, action: dict[str, float]) -> None:
+            self.sent.append(action)
+
+    home = {"shoulder_pan.pos": 0.0, "shoulder_lift.pos": 0.0, "elbow_flex.pos": 0.0}
+    idle = argparse.Namespace(
+        running=False,
+        _ctx=argparse.Namespace(hardware=argparse.Namespace(robot_wrapper=Robot(), initial_position=home)),
+    )
+    assert keys_rollout.raise_arm(idle, 8.0, seconds=0.04)
+    assert Robot.sent[-1] == {"shoulder_pan.pos": 3.0, "shoulder_lift.pos": -28.0, "elbow_flex.pos": 40.0}
+    lifts = [action["shoulder_lift.pos"] for action in Robot.sent]
+    assert lifts == sorted(lifts, reverse=True) and len(set(lifts)) == len(lifts)
+    assert keys_rollout.raise_arm(idle, 90.0, seconds=0.02) and Robot.sent[-1]["shoulder_lift.pos"] == -45.0
+    assert not keys_rollout.raise_arm(idle, 0.0)
+
+    # GPT-Live-1's voice is one endless stream with silence in it: only a short pause of it is kept.
+    buffer = keys_voice.SpeechBuffer()
+    silence, word = np.zeros(1600, dtype=np.float32), 0.1 * np.ones(1600, dtype=np.float32)
+    for chunk in [silence] * 20 + [word] * 5 + [silence] * 30 + [word] * 2 + [silence] * 30:
+        buffer.push(chunk)
+    kept_s = buffer.samples.size / keys_voice.RATE
+    assert kept_s == pytest.approx(0.5 + 0.4 + 0.2 + 0.4, abs=0.01)  # words, and one pause after each
+    assert buffer.pull(8000).size == 8000 and buffer.pull(10**6).size == 16000 and buffer.pull(10).size == 0
+    for _ in range(50):  # the stream's faint noise between sentences is silence too
+        buffer.push(0.001 * np.ones(1600, dtype=np.float32))
+    assert buffer.samples.size == 0
+
+
+def test_display_draws_the_sung_pitch_live_during_your_turn() -> None:
+    import keys_listen
+    import keys_ui
+
+    # The live reading: a steady F against mi is one key (100 cents) too high, in any octave.
+    rate = keys_listen.RATE
+    t = np.arange(int(rate * keys_ui.LIVE_WINDOW_S)) / rate
+    for hz in (349.23, 174.61):
+        tone = (0.2 * np.sin(2 * np.pi * hz * t) + 0.1 * np.sin(4 * np.pi * hz * t)).astype(np.float32)
+        result = keys_listen.tracker().detect(tone, rate)
+        heard, cents = keys_ui.live_pitch(result.pitch_hz, result.confidence, keys_ui.NOTE_OF["mi"])
+        assert heard is not None and cents is not None
+        assert abs(heard - hz) < 3 and abs(cents - 100) < 15
+    silence = keys_listen.tracker().detect(np.zeros(len(t), dtype=np.float32), rate)
+    assert keys_ui.live_pitch(silence.pitch_hz, silence.confidence, 64) == (None, None)
+    assert keys_ui.fold_cents(440.0, 69) == 0.0 and abs(keys_ui.fold_cents(220.0, 69)) < 1e-6
+
+    # The display keeps one trace per turn: a new turn starts it again, late readings of the old one are dropped.
+    hub = keys_ui.Hub()
+    hub.event({"kind": "phase", "name": "get_ready", "text": "Get ready", "note": "mi"})
+    assert hub.state["phase"] == "get_ready" and hub.state["asked"] == "mi"
+    hub.event({"kind": "your_turn", "note": "mi", "seconds": 6.0})
+    turn = hub.state["turn"]
+    assert turn["note"] == "mi" and turn["seconds"] == 6.0 and hub.state["phase"] == "your_turn"
+    hub.add_pitch(turn["t"], 0.5, None, 0.001, 0.0)
+    hub.add_pitch(turn["t"], 0.55, -42.26, 0.05, 0.05)
+    hub.add_pitch(turn["t"] - 9.0, 0.6, 10.0, 0.05, 0.1)
+    assert hub.trace == [[0.5, None, 0.001], [0.55, -42.3, 0.05]] and hub.state["voiced"] == 0.05
+    hub.event({"kind": "sung", "note": "mi", "cents": -40.0, "answer": "Well done."})
+    assert hub.state["phase"] == "feedback" and "ended" in hub.state["turn"]
+    hub.event({"kind": "your_turn", "note": "sol"})
+    assert hub.trace == [] and hub.state["turn"]["note"] == "sol" and hub.state["sung"] is None

@@ -10,6 +10,7 @@
     scripts/keys_play.sh replay all     # no policy: replays your own recorded presses, to check the keyboard position
     scripts/keys_play.sh both song ode  # a tune: one subtask per note, the policy stays loaded
     scripts/keys_play.sh both song "do re mi fa sol la"
+    scripts/keys_play.sh flow song "mi sol la" --flow   # the note-to-note policy: stays over the keys
     scripts/keys_play.sh score          # the tally so far
 
 Before each run hold the arm where you started the recordings (fingertip a few cm above the keys) until it
@@ -20,7 +21,9 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import random
+import shlex
 import signal
 import subprocess
 import sys
@@ -32,6 +35,7 @@ from keys_common import read_song
 from keys_scripted import open_midi
 from keys_synth import note_name
 from keys_teleop_check import TASK_NOTES
+from keys_ui_events import emit
 
 ROOT = Path(__file__).resolve().parent.parent
 RECORDING = "PawelLach/so101_keys_teleop_20261116_212951"
@@ -40,6 +44,9 @@ LOG = ROOT / "outputs" / "keys_scores" / "play_log.jsonl"
 FRONT = '"observation.images.front": "observation.images.camera1"'
 EARS = '"observation.images.ears": "observation.images.camera2"'
 MODELS = {
+    # Trained from the SmolVLA base on the 300 note-to-note episodes (keys_flow_train.sh), 10,000 steps.
+    # It never saw the trip back to the parked pose: use it with `song ... --flow`.
+    "flow": ("outputs/keys_models/flow_10k", "keys_cameras_midi.json", True),
     # Plan B: the 5,000-step policies continued for 5,000 more steps on 268 episodes.
     "both2": ("outputs/keys_models/both_v2", "keys_cameras_midi.json", True),
     "text2": ("outputs/keys_models/text_v2", "keys_cameras_front.json", False),
@@ -254,7 +261,7 @@ def song(
 
     Default: after each note the arm goes home, then starts the next note from there, as in the recordings.
     flow: the arm stays over the keyboard. The moment a note sounds, the next subtask text is sent and the
-    policy carries on from where it is. Faster, but the policy was never shown this in training.
+    policy carries on from where it is. The `flow` policy was trained this way; the older ones were not.
     """
     seconds = 0.0 if flow else 8.0  # flow is one long run; 0 means no time limit
     command, label = build_command(model, task_text(notes[0]), seconds, robot_port, None, smooth, hz, speed)
@@ -268,6 +275,8 @@ def song(
         f"Policy: {label}   Song: {' '.join(notes)}\nLoading, the first note takes about 20 seconds.",
         flush=True,
     )
+    emit("tune", notes=notes, policy=label)
+    emit("phase", name="loading", text="Loading the policy")
     process = subprocess.Popen(command, cwd=ROOT, stdin=subprocess.PIPE, text=True)
 
     def tell(line: str) -> None:
@@ -290,6 +299,7 @@ def song(
             tell(f"/subtask {task_text(note)}")
             if index == 0 or not flow:
                 tell("/start")
+            emit("ask", note=note, index=index)
             deadline = time.perf_counter() + (60.0 if index == 0 else 11.0)
             while len(presses()) == before and time.perf_counter() < deadline and process.poll() is None:
                 time.sleep(0.02)
@@ -303,9 +313,11 @@ def song(
             heard = [n for _, n in presses()[before:]][:1] if flow else [n for _, n in presses()[before:]]
             played.append((note, heard))
             names = [note_name(n) for n in heard]
+            emit("result", index=index, heard=names[0] if names else None)
             mark = "ok" if verdict(note, heard[:1]) == "correct" else "MISS"
             print(f"  [{index + 1}/{len(notes)}] {note:3s} -> {names or 'no note'}  {mark}", flush=True)
     finally:
+        emit("done")
         if process.poll() is None:
             if flow:
                 time.sleep(HOLD_S)
@@ -378,7 +390,8 @@ def build_command(
         command = [arg for arg in command if not arg.startswith("--duration=")]
         command += [f"--fps={round(30 * speed)}", f"--duration={seconds / speed:.1f}"]
         label += f"+{speed:g}x"
-        if smooth:
+        if smooth and os.environ.get("KEYS_SPEED_TUNING", "1") != "0":
+            # KEYS_SPEED_TUNING=0 leaves these three settings at the engine's defaults, to test them.
             # Faster playback uses a plan up sooner than this Mac can compute the next one. So: think in
             # half the refinement steps (about half the time), ask for the next plan earlier, and pause
             # instead of giving up if a plan is still late.
@@ -391,6 +404,12 @@ def build_command(
         # The policy still thinks in 30 steps per second, as recorded; the steps in between are filled in.
         command.append(f"--interpolation_multiplier={hz // 30}")
         label += f"+{hz}hz"
+    # Extra lerobot-rollout arguments for experiments, e.g. KEYS_ROLLOUT_ARGS="--inference.log_level=DEBUG".
+    if extra := shlex.split(os.environ.get("KEYS_ROLLOUT_ARGS", "")):
+        command += extra
+        label += "+extra"
+    if speed != 1.0 and smooth and os.environ.get("KEYS_SPEED_TUNING", "1") == "0":
+        label += "+untuned"
     return command, label
 
 

@@ -20,6 +20,9 @@ This is a hobby experiment, built at home on one rig. Expect rough edges.
 | `scripts/keys_play.py` | Let a trained policy play a note or a tune, and score it from MIDI |
 | `scripts/keys_companion.py` | The teacher: play notes you name, teach a tune, run a singing warm-up |
 | `scripts/keys_listen.py` | SwiftF0 pitch tracking: is a sung note flat or sharp, and which notes are in a riff |
+| `scripts/keys_voice.py` | The voice teacher: say "play mi sol la" or "start the lesson", the policy plays, you sing back |
+| `scripts/keys_ui.py` | The stage display: the note asked, the key pressed, what the robot hears, your pitch live |
+| `scripts/keys_rollout.py` | `lerobot-rollout` with a `/pause` command, so one loaded policy can play note after note |
 | `scripts/keys_pitch_judge.py` | A test of whether Gemini Decision 1 can judge pitch (it cannot) |
 | `scripts/keys_synth.py` | A small software piano for the MIDI keyboard, with a clean audio feed for the "ears" |
 | `plugins/lerobot_camera_spectrogram` | LeRobot camera plugin: a microphone or audio cable as a spectrogram image |
@@ -50,6 +53,25 @@ uv run --with-requirements scripts/requirements-keys.txt scripts/keys_listen.py 
 
 Each script starts with a docstring that explains what it does and how to run it.
 
+## On stage
+
+Three terminal tabs, then open http://localhost:8770 full screen:
+
+```bash
+uv run --with-requirements scripts/requirements-keys.txt scripts/keys_synth.py --ears "BlackHole 2ch"
+```
+
+```bash
+uv run --with-requirements scripts/requirements-keys.txt scripts/keys_ui.py
+```
+
+```bash
+uv run --with-requirements scripts/requirements-keys.txt --with aic-sdk==3.4.0 scripts/keys_voice.py --mic "MacBook Pro Microphone" --speaker "MacBook Pro Speakers"
+```
+
+Name the microphone and speaker: Bluetooth headphones that connect take over the Mac's defaults. The display
+needs no internet; `scripts/keys_ui.py --demo` shows a made-up session without the rig.
+
 ## Things you will need to change for your own rig
 
 - Serial ports and the robot id (`/dev/tty.usbmodem...`, `workshop_so101`) in the shell scripts and defaults
@@ -63,6 +85,7 @@ rig without new recordings. The datasets and models are not public yet.
 ## Optional services
 
 - [ai-coustics](https://ai-coustics.com) Quail Voice Focus cleans spoken commands. Needs `AIC_SDK_LICENSE`.
+- `keys_voice.py` talks through OpenAI GPT-Live-1. Needs `OPENAI_API_KEY`.
 - `keys_pitch_judge.py judge` uploads audio clips to Google. Needs `GEMINI_API_KEY`.
 
 Keys are read from the environment first, then from the `.env` file named at the top of the script.

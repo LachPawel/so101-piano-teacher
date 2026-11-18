@@ -15,3 +15,5 @@ python-rtmidi
 ./plugins/lerobot_camera_scaled
 # A small neural pitch tracker: sung notes and guitar riffs to note names (keys_listen.py).
 swift-f0>=0.3
+# The voice teacher's line to GPT-Live-1 (keys_voice.py).
+websockets>=13
