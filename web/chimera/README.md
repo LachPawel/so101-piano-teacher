@@ -58,8 +58,14 @@ verdict; a turn nobody closes (a teacher stopped with Ctrl+C) expires by itself.
   riff's first line four times as a backing track, John sings each key the arm presses, and you play
   over it. Nothing is judged, and the teacher's microphone is closed meanwhile.
 
+If the arm's policy stops by itself (its engine gives up when actions come late), the teacher starts it
+again (about 15 seconds, "Waking the arm" on the display) and plays the note again; after two failed
+restarts in one request it says the arm is down instead of crashing. The policy now also waits 8 seconds
+for late actions, not 1, holding the arm still meanwhile. A note the arm never sounds is not judged.
+
 Hidden, John sleeps: he is not drawn and his voice engine is suspended, so he costs the rig's computer
-nothing between notes.
+nothing between notes. Awake, he draws at 30 frames a second and a lower pixel ratio: the policy runs on the
+same GPU.
 
 ## Sound on another speaker
 

@@ -84,7 +84,7 @@ index e35f9ce..424705c 100644
  const HEAT: [number, string][] = [[0, "#3a2408"], [0.35, "#c9822a"], [0.6, "#ffb340"], [0.82, "#ffe39a"], [1, "#fff8ec"]];
  /** sound level 0..1 → dim amber → amber → pale yellow → white */
 diff --git a/src/ui/components/AnatomyView3D.tsx b/src/ui/components/AnatomyView3D.tsx
-index fbcb2cc..b6c0b05 100644
+index fbcb2cc..a012d9d 100644
 --- a/src/ui/components/AnatomyView3D.tsx
 +++ b/src/ui/components/AnatomyView3D.tsx
 @@ -18,7 +18,7 @@ import { sameBody } from "../body.ts";
@@ -96,19 +96,22 @@ index fbcb2cc..b6c0b05 100644
  import { articulatorSlots, tractInfo, type InfoFn, type OverlayFn, type SlotsFn } from "./AnatomyView.tsx";
  import type { ViewFlags } from "../render/anatomy.ts";
  import type { HumanArtic } from "../../wasm/engine.ts";
-@@ -41,7 +41,10 @@ export interface HeadFeed {
+@@ -41,7 +41,13 @@ export interface HeadFeed {
  
  const ease = (t: number) => (t < 0.5 ? 4 * t * t * t : 1 - (-2 * t + 2) ** 3 / 2);
  
 -export function AnatomyView3D(props: { slots?: SlotsFn; info?: InfoFn; showFormants?: boolean; overlay?: OverlayFn; feed?: HeadFeed; readouts?: boolean; view?: ViewFlags }) {
-+export function AnatomyView3D(props: { slots?: SlotsFn; info?: InfoFn; showFormants?: boolean; overlay?: OverlayFn; feed?: HeadFeed; readouts?: boolean; view?: ViewFlags; paused?: () => boolean; framing?: { down: number; zoom: number } }) {
++export function AnatomyView3D(props: { slots?: SlotsFn; info?: InfoFn; showFormants?: boolean; overlay?: OverlayFn; feed?: HeadFeed; readouts?: boolean; view?: ViewFlags; paused?: () => boolean; framing?: { down: number; zoom: number }; light?: { maxDpr: number; fps: number } }) {
++  // a page that shares the GPU with something that must not wait (a robot's policy): fewer pixels, fewer frames
++  const lightRef = useRef(props.light);
++  lightRef.current = props.light;
 +  // an embedding page may hide the head: while `paused()` is true nothing is simulated or drawn
 +  const pausedRef = useRef(props.paused);
 +  pausedRef.current = props.paused;
    const feedRef = useRef<HeadFeed | undefined>(props.feed);
    feedRef.current = props.feed;
    // the live head's view flags, when not the face screen's toggles (the Song page's fixed look)
-@@ -76,9 +79,10 @@ export function AnatomyView3D(props: { slots?: SlotsFn; info?: InfoFn; showForma
+@@ -76,9 +82,10 @@ export function AnatomyView3D(props: { slots?: SlotsFn; info?: InfoFn; showForma
      }
      // the palette's sRGB values go straight through, as on the 2D screens
      gl.outputColorSpace = THREE.LinearSRGBColorSpace;
@@ -120,7 +123,16 @@ index fbcb2cc..b6c0b05 100644
      r.facing = feedRef.current?.facing ?? 1;
      const glow = new Glow();
      const camera = r.camera;
-@@ -172,6 +176,11 @@ export function AnatomyView3D(props: { slots?: SlotsFn; info?: InfoFn; showForma
+@@ -149,7 +156,7 @@ export function AnatomyView3D(props: { slots?: SlotsFn; info?: InfoFn; showForma
+     canvas.addEventListener("pointerleave", offHead);
+ 
+     let w = 0, h = 0, dpr = 1;
+-    const maxDpr = () => Math.min(feedRef.current?.maxDpr ?? 2, window.devicePixelRatio || 1);
++    const maxDpr = () => Math.min(feedRef.current?.maxDpr ?? lightRef.current?.maxDpr ?? 2, window.devicePixelRatio || 1);
+     /** a fed head (no settings of its own to keep) goes back to its framing when its pane changes shape */
+     let refit = false;
+     const fit = () => {
+@@ -172,6 +179,16 @@ export function AnatomyView3D(props: { slots?: SlotsFn; info?: InfoFn; showForma
      let formants: number[] = [];
      let epoch = -1;
      const loop = (now: number) => {
@@ -129,10 +141,15 @@ index fbcb2cc..b6c0b05 100644
 +        raf = requestAnimationFrame(loop);
 +        return;
 +      }
++      const fps = lightRef.current?.fps;
++      if (fps && now - last < 1000 / fps - 2) {
++        raf = requestAnimationFrame(loop);
++        return;
++      }
        const dt = Math.min(0.05, (now - last) / 1000);
        // the face's expression keeps real time (a held note lasts as long at a low frame rate)
        const elapsed = Math.min(0.5, (now - last) / 1000);
-@@ -228,7 +237,7 @@ export function AnatomyView3D(props: { slots?: SlotsFn; info?: InfoFn; showForma
+@@ -228,7 +245,7 @@ export function AnatomyView3D(props: { slots?: SlotsFn; info?: InfoFn; showForma
          gl.render(r.scene, camera);
          ctx.setTransform(1, 0, 0, 1, 0, 0);
          ctx.globalCompositeOperation = "source-over";
@@ -294,10 +311,10 @@ index 79b6a3e..75c45b7 100644
      if (this.small.width !== w || this.small.height !== h) {
 diff --git a/src/ui/teacher/Coach.tsx b/src/ui/teacher/Coach.tsx
 new file mode 100644
-index 0000000..036bff1
+index 0000000..4bab1f4
 --- /dev/null
 +++ b/src/ui/teacher/Coach.tsx
-@@ -0,0 +1,256 @@
+@@ -0,0 +1,258 @@
 +/**
 + * The coach embed, "John": the 3D head. He sings one note when the page around asks, on its
 + * solfège name (do re mi fa sol la, from exact IPA), so you see the tongue, jaw and lips before
@@ -368,6 +385,8 @@ index 0000000..036bff1
 +const VIEW: ViewFlags = { pressure: true, particles: true, grid: false, calipers: false };
 +// the head sits high in the frame, so the throat and the voice box under the jaw are in view
 +const FRAMING = { down: 4.5, zoom: 1.22 };
++// next to him a robot's policy runs on the same GPU and must not wait: he draws less than he could
++const LIGHT = { maxDpr: 1.25, fps: 30 };
 +const words = mouthWords(sungNow, V.green);
 +
 +interface Ask {
@@ -525,7 +544,7 @@ index 0000000..036bff1
 +  return (
 +    <div className="coach">
 +      <div className="coach-head">
-+        <AnatomyView3D readouts={false} showFormants={false} overlay={words} view={VIEW} paused={isAsleep} framing={FRAMING} />
++        <AnatomyView3D readouts={false} showFormants={false} overlay={words} view={VIEW} paused={isAsleep} framing={FRAMING} light={LIGHT} />
 +      </div>
 +      <div className="coach-caption" data-mood={caption.mood}>
 +        <p className="coach-line">{caption.line}</p>

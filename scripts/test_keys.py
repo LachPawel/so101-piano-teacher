@@ -10,6 +10,7 @@ import json
 import sys
 import time
 from pathlib import Path
+from typing import Any
 
 import cut_chunks
 import key_sounds as ks
@@ -937,6 +938,69 @@ def test_listen_names_the_notes_of_a_riff_and_checks_a_sung_note() -> None:
     assert silent["cents"] is None and "did not hear" in silent["answer"]
 
 
+def test_the_arm_restarts_its_policy_when_it_dies_and_gives_up_cleanly(monkeypatch: pytest.MonkeyPatch) -> None:
+    import keys_voice
+
+    monkeypatch.setattr(keys_voice.keys_play, "HOLD_S", 0.0)
+    monkeypatch.setattr(keys_voice.time, "sleep", lambda _s: None)
+
+    class Midi:
+        def __init__(self) -> None:
+            self.events: list[tuple[float, int, int]] = []
+
+    class Stdin:
+        def __init__(self, proc: "Proc") -> None:
+            self.proc = proc
+
+        def write(self, line: str) -> None:
+            self.proc.lines.append(line.strip())
+            if line.startswith("/subtask") and self.proc.plays:  # this session presses the key, and lets go
+                midi_of = {"do": 60, "re": 62, "mi": 64, "fa": 65, "sol": 67, "la": 69}
+                note = midi_of[next(n for n in midi_of if f"play {n}," in line)]
+                self.proc.midi.events += [(float(len(self.proc.midi.events)), note, 90), (0.0, note, 0)]
+
+        def flush(self) -> None:
+            pass
+
+    class Proc:
+        def __init__(self, midi: Midi, plays: bool, dead: bool = False) -> None:
+            self.midi, self.plays, self.dead, self.lines = midi, plays, dead, []
+            self.stdin = Stdin(self)
+
+        def poll(self) -> int | None:
+            return 1 if self.dead else None
+
+        def kill(self) -> None:
+            self.dead = True
+
+        def wait(self, timeout: float = 0.0) -> int:
+            return 1
+
+    def hands_with(processes: list[Proc]) -> tuple[Any, list[Proc]]:
+        hands = object.__new__(keys_voice.PolicyHands)
+        hands.lift_deg, hands.label, hands.first, hands.midi = 4.0, "test", False, processes[0].midi
+        spawned: list[Proc] = []
+
+        def spawn() -> Proc:
+            spawned.append(processes[len(spawned) + 1])
+            return spawned[-1]
+
+        hands.spawn, hands.process = spawn, processes[0]
+        return hands, spawned
+
+    # The session died since the last note (a fault of the policy's engine): a new one is started, the note played.
+    midi = Midi()
+    hands, spawned = hands_with([Proc(midi, plays=False, dead=True), Proc(midi, plays=True)])
+    assert hands.play(["mi", "sol"]) == [("mi", "E4"), ("sol", "G4")]
+    assert len(spawned) == 1 and spawned[0].lines[:2] == ["/subtask play mi, the third key", "/start"]
+    # It keeps dying: after two fresh starts the request ends with a clear error, not a broken pipe.
+    midi = Midi()
+    hands, spawned = hands_with([Proc(midi, False, dead=True) for _ in range(4)])
+    with pytest.raises(keys_voice.ArmDown):
+        hands.play(["mi"])
+    assert len(spawned) == keys_voice.ARM_RESTARTS
+
+
 def test_voice_teacher_routes_requests_to_the_arm_and_the_pitch_check() -> None:
     pytest.importorskip("swift_f0")
     import asyncio
@@ -1081,6 +1145,29 @@ def test_voice_teacher_routes_requests_to_the_arm_and_the_pitch_check() -> None:
         arm.asked, sent[:], teacher.warmed, teacher.offered = [], [], False, True
         await user_says("Ready!")
         assert arm.asked == [keys_voice.WARMUP_NOTES] and teacher.warmed and teacher.offered
+
+        # The arm is down for good: the teacher says so and stays in the conversation. Nothing hangs.
+        await teacher.on_event({"type": "session.output_transcript.delta", "delta": "Ok."})
+        real_play, sent[:] = arm.play, []
+
+        def broken(notes: list[str], on_sound: object = None) -> list[tuple[str, str | None]]:
+            raise keys_voice.ArmDown("the arm's policy stopped 3 times in one request")
+
+        arm.play = broken
+        await user_says("play mi sol la")
+        arm.play = real_play
+        facts = [e["content"] for e in sent if e["type"] == "session.commentary.append"]
+        assert "The robot arm has stopped working" in facts[-1] and not teacher.busy
+        assert sent[-1]["type"] == "session.input_audio.unmute"
+
+        # A key that never sounds is not a turn: nothing is recorded, and it is not held against the user.
+        await teacher.on_event({"type": "session.output_transcript.delta", "delta": "Ok."})
+        sent[:], audio.sung = [], []
+        arm.play = lambda notes, on_sound=None: [(n, None) for n in notes]
+        await user_says("check my pitch on mi")
+        arm.play = real_play
+        facts = [e["content"] for e in sent if e["type"] == "session.commentary.append"]
+        assert facts[-1].startswith("The arm did not manage to play mi, so nothing was checked.")
 
         # Band mode: the arm loops the riff's first line; nothing is recorded or judged.
         await teacher.on_event({"type": "session.output_transcript.delta", "delta": "Ok."})

@@ -278,25 +278,56 @@ class Hands(Protocol):
     def close(self) -> None: ...
 
 
+class ArmDown(RuntimeError):
+    """The arm's policy stopped and could not be started again."""
+
+
+# The policy holds the arm still when its next actions come late, and gives up after this long. The stock
+# second was too short next to a busy browser: a late inference then ended the whole session mid-song.
+STARVATION_GRACE_S = 8.0
+ARM_RESTARTS = 2  # how often one request may start the policy again before it gives up
+
+
 class PolicyHands:
-    """The learned policy in one long `lerobot-rollout` session, as keys_play.py's `song --flow` runs it."""
+    """The learned policy in one long `lerobot-rollout` session, as keys_play.py's `song --flow` runs it.
+    If that session dies (a fault of the policy's engine, a cable), it is started again and the note retried."""
 
     def __init__(self, model: str, robot_port: str, lift_deg: float = 4.0) -> None:
         self.lift_deg = lift_deg
         task = keys_play.task_text(LESSON_NOTES[0])
         command, self.label = keys_play.build_command(model, task, 0.0, robot_port, None, True, 60, 1.0)
         command.append("--interactive=true")
+        if not any(arg.startswith("--inference.action_starvation_grace_s") for arg in command):
+            command.append(f"--inference.action_starvation_grace_s={STARVATION_GRACE_S:g}")
         # Our own launcher instead of the stock command: it adds /pause, to wait above the keys.
         command[:1] = [sys.executable, str(Path(__file__).with_name("keys_rollout.py"))]
         self.midi = open_midi("auto", time.perf_counter())
         if self.midi is None:
             sys.exit("The arm needs the MIDI keyboard: it tells the script when a note has sounded.")
         print(f"Policy: {self.label}. Loading takes about 15 seconds.", flush=True)
-        self.process = subprocess.Popen(command, cwd=keys_play.ROOT, stdin=subprocess.PIPE, text=True)  # noqa: S603
+        self.command = command
+        self.process = self.spawn()
+        self.first = True
+
+    def spawn(self) -> subprocess.Popen[str]:
+        return subprocess.Popen(self.command, cwd=keys_play.ROOT, stdin=subprocess.PIPE, text=True)  # noqa: S603
+
+    def restart(self) -> None:
+        """The policy's session ended by itself: start a new one. It loads for about 15 seconds; what is
+        sent to it meanwhile waits in its input."""
+        print("\n[arm] The policy stopped. Starting it again: about 15 seconds.", flush=True)
+        emit("phase", name="loading", text="Waking the arm")
+        if self.process.poll() is None:  # alive but not listening: it must let go of the arm first
+            self.process.kill()
+        with contextlib.suppress(subprocess.TimeoutExpired):
+            self.process.wait(timeout=10)
+        self.process = self.spawn()
         self.first = True
 
     def tell(self, line: str) -> None:
-        assert self.process.stdin is not None
+        """One line to the policy's session. BrokenPipeError when that session is gone."""
+        if self.process.poll() is not None or self.process.stdin is None:
+            raise BrokenPipeError("the policy's session has ended")
         self.process.stdin.write(line + "\n")
         self.process.stdin.flush()
 
@@ -310,36 +341,52 @@ class PolicyHands:
     def play(self, notes: list[str], on_sound: OnSound | None = None) -> list[tuple[str, str | None]]:
         played: list[tuple[str, str | None]] = []
         emit("tune", notes=notes, policy=getattr(self, "label", ""))
-        for index, note in enumerate(notes):
-            before = len(self.presses())
-            self.tell(f"/subtask {keys_play.task_text(note)}")
-            if index == 0:
-                self.tell("/start")
-            emit("ask", note=note, index=index)
-            deadline = time.perf_counter() + (60.0 if self.first else 11.0)
-            self.first = False
-            while len(self.presses()) == before and time.perf_counter() < deadline:
-                if self.process.poll() is not None:
-                    return [*played, (note, None)]
-                time.sleep(0.02)
+        index, running, restarts = 0, False, 0  # running: this session was told /start for this request
+        while index < len(notes):
+            note = notes[index]
+            try:
+                before = len(self.presses())
+                self.tell(f"/subtask {keys_play.task_text(note)}")
+                if not running:
+                    self.tell("/start")
+                    running = True
+                emit("ask", note=note, index=index)
+                deadline = time.perf_counter() + (60.0 if self.first else 11.0)
+                self.first = False
+                while len(self.presses()) == before and time.perf_counter() < deadline:
+                    if self.process.poll() is not None:
+                        raise BrokenPipeError("the policy's session ended while playing")
+                    time.sleep(0.02)
+            except OSError as error:  # the session is gone: a new one, and this note again
+                if restarts >= ARM_RESTARTS:
+                    emit("done")
+                    raise ArmDown(f"the arm's policy stopped {restarts + 1} times in one request") from error
+                restarts += 1
+                self.restart()
+                running = False
+                continue
             heard = [n for _, n in self.presses()[before:]][:1]
             played.append((note, note_name(heard[0]) if heard else None))
             emit("result", index=index, heard=played[-1][1])
             if heard and on_sound is not None:
                 on_sound(index)
+            index += 1
         # The policy only learned presses, so it leaves the finger on the key. Stop it, raise the shoulder a few
         # degrees, and wait there in the air: not back at the start pose. The next press then begins the way
         # the policy was trained, from above the previous key. A press after a trip home is its weakest.
         time.sleep(keys_play.HOLD_S)
-        self.tell(f"/pause {self.lift_deg:g}")
+        with contextlib.suppress(OSError):  # a session that died right now is started again by the next request
+            self.tell(f"/pause {self.lift_deg:g}")
+            emit("done")
+            # MIDI says whether the key really came up. A key still held keeps the piano ringing, and that note
+            # would then be measured as the user's singing: raise a little more until it is released.
+            for _ in range(4):
+                time.sleep(0.7)
+                if not self.keys_down():
+                    break
+                self.tell("/pause 3")
+            return played
         emit("done")
-        # MIDI says whether the key really came up. A key still held keeps the piano ringing, and that note
-        # would then be measured as the user's singing: raise a little more until it is released.
-        for _ in range(4):
-            time.sleep(0.7)
-            if not self.keys_down():
-                break
-            self.tell("/pause 3")
         return played
 
     def keys_down(self) -> set[int]:
@@ -760,10 +807,28 @@ class Teacher:
                     "warm-up or the lesson, and mention they can also ask for a song or band mode.",
                 )
             await self.audio.finished_speaking()
+        except ArmDown as error:
+            print(f"\n[arm] {error}", flush=True)
+            with contextlib.suppress(Exception):
+                await self.tell(
+                    delegation_id,
+                    "The robot arm has stopped working and could not be started again. Tell the user that in one "
+                    "short line, and that the arm needs a look before any more notes.",
+                )
+        except Exception:  # noqa: BLE001  whatever broke, the conversation goes on: say so, offer the next step
+            print(f"\n[request failed]\n{traceback.format_exc()}", flush=True)
+            with contextlib.suppress(Exception):
+                await self.tell(
+                    delegation_id,
+                    "Something went wrong on the robot's side and the request was not finished. Say so in one "
+                    "short line and offer to try again.",
+                )
         finally:
             self.busy = False
-            await self.send({"type": "session.input_audio.unmute"})
+            emit("mode", name="")
             emit("phase", name="listening", text="Listening")
+            with contextlib.suppress(Exception):  # a connection that just closed must not hide what happened
+                await self.send({"type": "session.input_audio.unmute"})
 
     async def play(self, delegation_id: str | None, notes: list[str]) -> None:
         played = await asyncio.to_thread(self.hands.play, notes)
@@ -838,6 +903,11 @@ class Teacher:
         await asyncio.wait([playing, waiting], return_when=asyncio.FIRST_COMPLETED)
         waiting.cancel()
         self.last_note = note
+        # The arm is done and no key sounded: there is nothing to sing along to, or to judge. (Its own report
+        # decides: the "sounded" signal crosses threads and may arrive a moment after the arm has finished.)
+        if not sounded.is_set() and not any(heard for _, heard in await playing):
+            emit("phase", name="idle", text="The arm missed")
+            return f"The arm did not manage to play {note}, so nothing was checked.", "That one is on the arm, not on you."
         # The recording starts the moment the key sounds: sing along. Up to nine seconds; it closes early
         # once it has HOLD_S of clear voice after the piano. The display's count starts again from here.
         start = time.perf_counter()
@@ -848,7 +918,11 @@ class Teacher:
             return bool(cut) and keys_listen.voiced_seconds(audio[cut[0] :], RATE) >= HOLD_S
 
         recording = asyncio.ensure_future(self.audio.record(self.listen_s, enough))
-        await playing  # returns once the arm has lifted off the key, or tried to
+        try:
+            await playing  # returns once the arm has lifted off the key, or tried to
+        except BaseException:
+            recording.cancel()  # the arm failed: nobody is waiting for this recording
+            raise
         # The piano is quiet once the key is up, or once a key left resting down has faded: whichever is first.
         quiet = min(time.perf_counter(), start + HELD_QUIET_S) - start + PIANO_TAIL_S
         cut.append(int(quiet * RATE))
@@ -881,7 +955,7 @@ class Teacher:
         for attempt in (1, 2):  # a second go when nothing was heard, while the teacher's ears stay closed
             fact, answer = await self.sing_back(note, delegation_id)
             await self.tell(delegation_id, f"{fact} Tell them that, then: {answer}")
-            if not fact.startswith(("Nothing clear", "The piano kept")) or attempt == 2:
+            if not fact.startswith(("Nothing clear", "The piano kept", "The arm did not")) or attempt == 2:
                 break
             await self.audio.finished_speaking()
 
