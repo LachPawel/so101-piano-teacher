@@ -10,6 +10,81 @@ change. The MIDI keyboard labels every recording and scores every press for free
 
 This is a hobby experiment, built at home on one rig. Expect rough edges.
 
+## How it works
+
+### The live loop
+
+You talk to Reachy Mini. A speech-to-speech model (GPT-Live-1) turns what you say into one subtask at a
+time, like "play sol, the fifth key". The policy plays it on the keyboard, and the keyboard's sound comes
+back to the policy as its "ears". MIDI says which key really went down. When you sing, a small pitch tracker
+judges you, and Reachy tells you what to fix.
+
+```mermaid
+flowchart LR
+    you["You<br/>talk and sing"] -- "speech, cleaned by Voice Focus" --> reachy["Reachy Mini<br/>speech-to-speech teacher"]
+    reachy -- "play sol, the fifth key" --> policy["SmolVLA policy"]
+    policy -- "motor commands" --> arm["SO-101 arm"]
+    arm -- "press" --> keys["MIDI keyboard"]
+    keys -- "sound, down a virtual cable" --> ears["Ears<br/>3 s of sound as a picture"]
+    ears -- "second camera" --> policy
+    keys -- "which key went down" --> reachy
+    you -- "singing, raw microphone" --> pitch["Pitch check<br/>SwiftF0"]
+    pitch -- "how far off" --> reachy
+    reachy -- "John sings the note" --> display["Stage display<br/>browser"]
+```
+
+### Inside the policy
+
+SmolVLA is a small vision-language-action model: an LLM that reads images, joint angles and words, with an
+action head that outputs motion. It only takes images, so the sound goes in as a second camera: a
+spectrogram of the last 3 seconds, 128 × 128, 30 times a second. No audio encoder, no change to the model.
+
+```mermaid
+flowchart LR
+    front["Front camera<br/>Reachy's eye"] --> siglip["SigLIP<br/>vision encoder"]
+    earsimg["Ears<br/>spectrogram image"] --> siglip
+    siglip -- "visual tokens" --> vlm["SmolVLM2<br/>first 16 layers"]
+    joints["Joint angles<br/>5 joints + gripper"] -- "state" --> vlm
+    prompt["Prompt<br/>play sol, the fifth key"] -- "text tokens" --> vlm
+    vlm -- "features" --> expert["Action expert<br/>flow matching, 10 steps"]
+    expert --> actions["50 actions<br/>about 1.7 s of motion, then plan again"]
+```
+
+The arm learns notes, not songs: each demonstration is one note, labelled by MIDI. The teacher strings notes
+into melodies.
+
+### One note of a lesson
+
+For beginners, John (a 3D singing head, [Chimera](https://github.com/jamesondh/chimera-vocal-synth)) shows
+each note before your turn.
+
+```mermaid
+sequenceDiagram
+    participant R as Reachy
+    participant A as Arm
+    participant J as John, on screen
+    participant Y as You
+    R->>A: play mi
+    A->>Y: the note sounds
+    J->>Y: sings mi with it, the throat shown in 3D
+    R->>Y: "Now your turn"
+    A->>Y: plays mi again
+    Y->>R: sings mi, judged by the pitch tracker
+    R->>Y: "A little low. Slide up, like asking a question."
+```
+
+### The experiment
+
+Two policies on the same data: camera only, and camera plus ears. Every run scored by MIDI.
+
+| Model, 5k training steps | Runs | Presses per run | Pressed exactly once |
+| --- | --- | --- | --- |
+| Camera + ears | 13 | 1.5 | 7 |
+| Camera only | 12 | 2.8 | 2 |
+
+The camera-only policy found the key and kept pressing it: it couldn't tell the note had sounded. With twice
+the training it caught up (1.7 presses per run). About 12 runs each: a demonstration, not a proof.
+
 ## What is in here
 
 | Path | What it does |
