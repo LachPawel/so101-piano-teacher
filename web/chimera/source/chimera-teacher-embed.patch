@@ -11,10 +11,10 @@ index d7d4616..59cfafb 100644
 +dist-teacher
 diff --git a/src/teacher.tsx b/src/teacher.tsx
 new file mode 100644
-index 0000000..d335a6e
+index 0000000..05b8d3a
 --- /dev/null
 +++ b/src/teacher.tsx
-@@ -0,0 +1,30 @@
+@@ -0,0 +1,31 @@
 +/**
 + * Entry of the coach embed (teacher.html): the engine first, as in main.tsx, then the coach.
 + */
@@ -25,9 +25,10 @@ index 0000000..d335a6e
 +
 +// the piano teacher's colours (so101-piano-teacher web/css/style.css): olive lines on paper, warm sound
 +useLightTheme(
-+  "#fffcf5",
++  "#ffffff", // white: under the page's multiply blend the background vanishes
 +  { blue: "#8e917c", blueMid: "#b0b29f", blueDim: "#dcd9ca", frame: "#e3dfd1", green: "#4f6a2c", red: "#a94b36", pink: "#d87827", white: "#282b23", amber: "#d87827" },
 +  ["#f6efdc", "#ecc98a", "#d87827", "#a94b36", "#5d2a17"],
++  { primary: "#282b23", secondary: "#797b6e" },
 +);
 +
 +const root = document.getElementById("root")!;
@@ -46,10 +47,10 @@ index 0000000..d335a6e
 +
 +void boot();
 diff --git a/src/ui/colors.ts b/src/ui/colors.ts
-index e35f9ce..0e49410 100644
+index e35f9ce..424705c 100644
 --- a/src/ui/colors.ts
 +++ b/src/ui/colors.ts
-@@ -23,6 +23,22 @@ export const TEXT = {
+@@ -23,6 +23,23 @@ export const TEXT = {
    secondary: "#e2f5fc",
  } as const;
  
@@ -61,8 +62,9 @@ index e35f9ce..0e49410 100644
 +export const THEME = { light: false, bg: "#000000", add: "lighter" as GlobalCompositeOperation };
 +
 +/** Dark lines on `bg`, in the colours of the page around: `colors` replaces palette entries. */
-+export function useLightTheme(bg: string, colors: Partial<typeof V>, heatStops: string[]): void {
++export function useLightTheme(bg: string, colors: Partial<typeof V>, heatStops: string[], text?: { primary: string; secondary: string }): void {
 +  THEME.light = true;
++  if (text) Object.assign(TEXT as { primary: string; secondary: string }, text);
 +  THEME.bg = bg;
 +  THEME.add = "darken";
 +  Object.assign(V, colors);
@@ -72,7 +74,7 @@ index e35f9ce..0e49410 100644
  /** mix two #rrggbb colours */
  export function mix(hex: string, to: string, u: number): string {
    const a = parseInt(hex.slice(1), 16), b = parseInt(to.slice(1), 16);
-@@ -30,7 +46,7 @@ export function mix(hex: string, to: string, u: number): string {
+@@ -30,7 +47,7 @@ export function mix(hex: string, to: string, u: number): string {
    return "#" + [16, 8, 0].map((s) => ch(s).toString(16).padStart(2, "0")).join("");
  }
  /** the whitish core of a bright beam in this colour */
@@ -245,20 +247,22 @@ index 79b6a3e..75c45b7 100644
      if (this.small.width !== w || this.small.height !== h) {
 diff --git a/src/ui/teacher/Coach.tsx b/src/ui/teacher/Coach.tsx
 new file mode 100644
-index 0000000..76115ff
+index 0000000..57bf864
 --- /dev/null
 +++ b/src/ui/teacher/Coach.tsx
-@@ -0,0 +1,186 @@
+@@ -0,0 +1,223 @@
 +/**
-+ * The coach embed: only the 3D head, full frame, singing one note on "la" when the page around
-+ * it asks. Another page shows it in an iframe and talks to it with postMessage (same origin only):
++ * The coach embed, "John": the 3D head. He sings one note when the page around asks, on its
++ * solfège name (do re mi fa sol la, from exact IPA), so you see the tongue, jaw and lips before
++ * your turn; while he sings, his pitch goes to the page ("pitch" messages) to draw on its lane. Another page shows it in an iframe and talks to it with postMessage (same origin only):
 + *
-+ *   in   { type: "sing", midi, word = "la", seconds = 1.6, name? }   sing one note (name: "mi", for the caption)
++ *   in   { type: "sing", midi, word?, seconds = 1.6, name? }         sing one note; name "mi" sings mi, else word, else "la"
 + *        { type: "stop" }                                              stop singing
 + *        { type: "idle", text? }                                       clear the note, say something else
 + *        { type: "body", body: "male" | "female" | "child" }
 + *        { type: "mute", on }                                          the head still sings, silently
 + *   out  { source: "chimera-coach", type: "ready" | "started" | "singing" | "sang" | "needs-click", midi? }
++ *        { source: "chimera-coach", type: "pitch", f0 }                 his pitch (Hz), 20 times a second while he sings
 + *
 + * Browsers start audio only from a click inside this frame, so until then a Start button waits
 + * over the head, and a note asked for meanwhile is sung as soon as it is clicked.
@@ -275,21 +279,41 @@ index 0000000..76115ff
 +import { V } from "../colors.ts";
 +import type { BodyName } from "../../worklet/protocol.ts";
 +import type { ViewFlags } from "../render/anatomy.ts";
++import type { Syllable } from "../../wasm/types.ts";
 +
 +const LETTERS = ["C", "C♯", "D", "E♭", "E", "F", "F♯", "G", "A♭", "A", "B♭", "B"];
 +const noteName = (midi: number) => `${LETTERS[((midi % 12) + 12) % 12]}${Math.floor(midi / 12) - 1}`;
 +
-+/** One line of coaching per note of the scale (by pitch class), dry as a simulated throat. */
-+const QUIPS: Record<number, string> = {
-+  0: "Low and lazy. Yawn first, then la.",
-+  2: "One small step up. Tongue taps, jaw drops.",
-+  4: "Watch the tongue flick up for the L, then let the jaw fall.",
-+  5: "Barely above mi. No need to panic. I can't panic, I have no adrenaline.",
-+  7: "The voice box wants to climb. Let it stay calm, like mine. I'm a simulation.",
-+  9: "La on la. Very meta. Open up, don't shout.",
++/** The six names as sung (English letter-to-sound reads "mi" as "mih" and "fa" as in "fat"). */
++const syl = (text: string, onset: string[], vowel: string, coda: string[] = []): Syllable => ({
++  text,
++  onset: onset.map((ipa) => ({ ipa, stress: 0 })),
++  nucleus: { ipa: vowel, stress: 1 },
++  coda: coda.map((ipa) => ({ ipa, stress: 0 })),
++  wordEnd: true,
++  phraseEnd: false,
++});
++const SOLFEGE: Record<string, Syllable> = {
++  do: syl("do", ["d"], "oʊ"),
++  re: syl("re", ["ɹ"], "eɪ"),
++  mi: syl("mi", ["m"], "i"),
++  fa: syl("fa", ["f"], "ɑ"),
++  sol: syl("sol", ["s"], "oʊ", ["l"]),
++  la: syl("la", ["l"], "ɑ"),
++};
++
++/** One line of coaching per name: what the mouth does, dry as a simulated throat. */
++const QUIPS: Record<string, string> = {
++  do: "Round lips, like a little O. Low and lazy.",
++  re: "Ray. A tiny smile on the ay. Tongue stays relaxed.",
++  mi: "Mee. Big smile, tongue high. Like you just saw cheese.",
++  fa: "Fah. Jaw drops. The doctor says aah.",
++  sol: "Sole. Round lips again, then the tongue taps up for the L.",
++  la: "Lah. Tongue flicks up for the L, then the jaw falls.",
 +};
 +const ANY_QUIP = "Copy my throat. It's open source.";
-+const AFTER = ["Your turn. Copy the throat.", "Now you. I'll be watching. I have no eyelids.", "Your go. Same shape, your own throat."];
++const AFTER = ["Same shape, your own throat.", "I'll be watching. I have no eyelids.", "Copy me. I'm told it's flattering."];
++const cap = (w: string) => w.charAt(0).toUpperCase() + w.slice(1);
 +
 +const VIEW: ViewFlags = { pressure: true, particles: true, grid: false, calipers: false };
 +const words = mouthWords(sungNow, V.green);
@@ -312,7 +336,7 @@ index 0000000..76115ff
 +function Coach() {
 +  const started = useStore((s) => s.started);
 +  const starting = useStore((s) => s.starting);
-+  const [caption, setCaption] = useState<Caption>({ line: "Chimera", quip: "Your throat coach. I sing it, you copy it.", mood: "wait" });
++  const [caption, setCaption] = useState<Caption>({ line: "Hi, I'm John.", quip: "All throat, no body. I sing it first, you copy it.", mood: "wait" });
 +  const [pending, setPending] = useState<Ask | null>(null);
 +  const [muted, setMuted] = useState(new URLSearchParams(location.search).get("muted") === "1");
 +
@@ -327,8 +351,15 @@ index 0000000..76115ff
 +    let timer = 0;
 +    let afterTimer = 0;
 +    let turn = 0;
++    let singing = false;
++    // his pitch for the page's lane, from the engine's telemetry
++    const pitch = window.setInterval(() => {
++      const t = engine.latest?.t;
++      if (singing && t && t.voicing > 0.3 && t.f0 > 0) tell("pitch", { f0: t.f0 });
++    }, 50);
 +
 +    const release = () => {
++      singing = false;
 +      clearTimeout(timer);
 +      const st = useStore.getState();
 +      for (const n of st.heldNotes) st.noteOff(n);
@@ -336,8 +367,8 @@ index 0000000..76115ff
 +
 +    const sing = (ask: Ask) => {
 +      const st = useStore.getState();
-+      const name = ask.name ? `${ask.name}, ` : "";
-+      const quip = QUIPS[((ask.midi % 12) + 12) % 12] ?? ANY_QUIP;
++      const shown = SOLFEGE[ask.name ?? ""] ? ask.name! : ask.word;
++      const quip = QUIPS[shown] ?? ANY_QUIP;
 +      if (!st.started) {
 +        setPending(ask);
 +        setCaption({ line: `I want to sing ${ask.name ?? noteName(ask.midi)}!`, quip: "Click Start, browsers won't let me make a sound until you do.", mood: "wait" });
@@ -346,16 +377,20 @@ index 0000000..76115ff
 +      }
 +      release();
 +      clearTimeout(afterTimer);
-+      useSing.getState().setLyrics(ask.word);
++      const exact = SOLFEGE[shown];
++      if (exact) useSing.setState({ lyrics: shown, syllables: [exact], cursor: 0 });
++      else useSing.getState().setLyrics(shown);
 +      st.noteOn(ask.midi, 96);
-+      setCaption({ line: `${ask.word}! (${name}${noteName(ask.midi)})`, quip, mood: "sing" });
++      singing = true;
++      setCaption({ line: `${cap(shown)}! (${noteName(ask.midi)})`, quip, mood: "sing" });
 +      tell("singing", { midi: ask.midi });
 +      const my = ++turn;
 +      timer = window.setTimeout(() => {
 +        useStore.getState().noteOff(ask.midi);
++        singing = false;
 +        tell("sang", { midi: ask.midi });
 +        afterTimer = window.setTimeout(() => {
-+          if (my === turn) setCaption({ line: `Your turn: ${ask.name ?? noteName(ask.midi)}`, quip: AFTER[my % AFTER.length], mood: "after" });
++          if (my === turn) setCaption({ line: `Your turn now: ${shown}`, quip: AFTER[my % AFTER.length], mood: "after" });
 +        }, 400);
 +      }, Math.max(0.3, ask.seconds) * 1000);
 +    };
@@ -365,7 +400,7 @@ index 0000000..76115ff
 +      if (e.origin !== location.origin || !e.data || typeof e.data !== "object") return;
 +      const m = e.data as Record<string, unknown>;
 +      if (m.type === "sing" && typeof m.midi === "number" && m.midi >= 24 && m.midi <= 96) {
-+        sing({ midi: Math.round(m.midi), word: typeof m.word === "string" && m.word ? m.word : "la", seconds: typeof m.seconds === "number" ? m.seconds : 1.6, name: typeof m.name === "string" ? m.name : undefined });
++        sing({ midi: Math.round(m.midi), word: typeof m.word === "string" && m.word ? m.word.toLowerCase() : "la", seconds: typeof m.seconds === "number" ? m.seconds : 1.6, name: typeof m.name === "string" ? m.name : undefined });
 +      } else if (m.type === "stop") {
 +        turn++;
 +        release();
@@ -374,7 +409,7 @@ index 0000000..76115ff
 +        turn++;
 +        release();
 +        setPending(null);
-+        setCaption({ line: "Chimera", quip: typeof m.text === "string" ? m.text : "Resting my vocal folds. They're made of maths.", mood: "wait" });
++        setCaption({ line: "John", quip: typeof m.text === "string" ? m.text : "Resting my vocal folds. They're made of maths.", mood: "wait" });
 +      } else if (m.type === "body" && typeof m.body === "string" && (BODIES as string[]).includes(m.body)) {
 +        useStore.getState().setBody(PRESETS[m.body as BodyName]);
 +      } else if (m.type === "mute") {
@@ -385,6 +420,7 @@ index 0000000..76115ff
 +    tell("ready");
 +    return () => {
 +      window.removeEventListener("message", onMessage);
++      clearInterval(pitch);
 +      release();
 +    };
 +  }, []);
@@ -401,14 +437,16 @@ index 0000000..76115ff
 +
 +  return (
 +    <div className="coach">
-+      <AnatomyView3D readouts={false} showFormants={false} overlay={words} view={VIEW} />
++      <div className="coach-head">
++        <AnatomyView3D readouts={false} showFormants={false} overlay={words} view={VIEW} />
++      </div>
 +      <div className="coach-caption" data-mood={caption.mood}>
 +        <p className="coach-line">{caption.line}</p>
++        <p className="coach-quip">{caption.quip}</p>
 +      </div>
-+      <p className="coach-quip">{caption.quip}</p>
 +      {!started && (
 +        <button className="coach-start" type="button" onClick={() => void start()} disabled={starting}>
-+          {starting ? "Clearing my throat…" : "Start Chimera"}
++          {starting ? "Clearing my throat…" : "Start John"}
 +          <small>sound needs one click</small>
 +        </button>
 +      )}
@@ -416,6 +454,7 @@ index 0000000..76115ff
 +        {muted ? "Muted" : "Sound on"}
 +      </button>
 +      <p className="coach-credit">
++        voice by{" "}
 +        <a href="https://github.com/jamesondh/chimera-vocal-synth" target="_blank" rel="noreferrer">
 +          Chimera
 +        </a>{" "}
@@ -437,18 +476,18 @@ index 0000000..76115ff
 +}
 diff --git a/src/ui/teacher/teacher.css b/src/ui/teacher/teacher.css
 new file mode 100644
-index 0000000..a2955f8
+index 0000000..f34e91b
 --- /dev/null
 +++ b/src/ui/teacher/teacher.css
-@@ -0,0 +1,147 @@
+@@ -0,0 +1,149 @@
 +/* The coach embed: the head fills the frame, words float over it. Colours and type are the piano
 +   teacher's (so101-piano-teacher web/css/style.css), so the frame sits on its page as one piece. */
 +html {
-+  background: #fffcf5;
++  background: #ffffff;
 +}
 +
 +body.teacher {
-+  --paper: #fffcf5;
++  --paper: #ffffff;
 +  --ink: #282b23;
 +  --olive: #4b5039;
 +  --muted: #797b6e;
@@ -480,7 +519,10 @@ index 0000000..a2955f8
 +  left: 0;
 +  right: 0;
 +  top: 0;
++  left: auto;
 +  padding: 12px 18px 0;
++  max-width: 40%;
++  text-align: right;
 +  pointer-events: none;
 +}
 +
@@ -500,17 +542,16 @@ index 0000000..a2955f8
 +}
 +
 +.coach-quip {
-+  position: absolute;
-+  left: 0;
-+  right: 0;
-+  bottom: 30px;
-+  margin: 0;
-+  padding: 18px 18px 4px;
-+  pointer-events: none;
-+  background: linear-gradient(rgba(255, 252, 245, 0), var(--paper) 45%);
++  margin: 6px 0 0 auto;
++  max-width: 22em;
 +  font-size: clamp(11px, 2.6vmin, 16px);
 +  line-height: 1.35;
 +  color: var(--muted);
++}
++
++.coach-head {
++  position: absolute;
++  inset: 0;
 +}
 +
 +.coach-start {
@@ -588,6 +629,26 @@ index 0000000..a2955f8
 +.coach-credit a {
 +  color: var(--accent);
 +}
+diff --git a/src/ui/usePhosphor.ts b/src/ui/usePhosphor.ts
+index a44efee..1d7685a 100644
+--- a/src/ui/usePhosphor.ts
++++ b/src/ui/usePhosphor.ts
+@@ -1,5 +1,6 @@
+ import { useEffect, useRef } from "react";
+ import { Glow } from "./render/vector.ts";
++import { THEME } from "./colors.ts";
+ import type { CanvasFrame } from "./useCanvas.ts";
+ 
+ /**
+@@ -38,7 +39,7 @@ export function usePhosphor(draw: (f: CanvasFrame) => void, opts: { sigma?: numb
+         ctx.setTransform(1, 0, 0, 1, 0, 0);
+         ctx.globalCompositeOperation = "source-over";
+         ctx.globalAlpha = 1;
+-        ctx.fillStyle = "#000";
++        ctx.fillStyle = THEME.bg;
+         ctx.fillRect(0, 0, canvas.width, canvas.height);
+         ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+         drawRef.current({ ctx, w, h, dpr, dt, now });
 diff --git a/teacher.html b/teacher.html
 new file mode 100644
 index 0000000..8197449

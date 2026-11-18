@@ -59,9 +59,9 @@ export function headline(state) {
     case "playing":
       return note ? { html: `The arm<br>plays ${note}.`, tone: "arm" } : { html: "The arm<br>plays.", tone: "arm" };
     case "get_ready":
-      return { html: `Watch, then<br>sing ${note ?? ""}.`, tone: "ready" };
+      return { html: `John sings ${note ?? ""}.<br>Watch.`, tone: "ready" };
     case "your_turn":
-      return { html: `Sing ${note ?? ""}<br>now.`, tone: "sing" };
+      return { html: `Your turn:<br>sing ${note ?? ""}.`, tone: "sing" };
     case "feedback": {
       const { html, tone } = verdict(state.sung?.cents ?? null);
       return { html, tone };
@@ -115,7 +115,11 @@ export function startLive(stage) {
   fit();
   window.addEventListener("resize", fit);
 
-  const coach = startChimera(); // the throat coach, an experiment: null with ?chimera=0
+  const johnPitch = []; // John's pitch while he sings: [t, midi]
+  const coach = startChimera((f0) => {
+    johnPitch.push([Date.now() / 1000, 69 + 12 * Math.log2(f0 / 440)]);
+    while (johnPitch.length && johnPitch[0][0] < Date.now() / 1000 - LANE_S - 2) johnPitch.shift();
+  }); // John, the singing head of beginner mode: null with ?chimera=0
   let state = null;
   let readings = []; // the pitch heard, oldest first
   const targets = []; // the notes asked for over time: { from, to (null while asked), midi }
@@ -246,7 +250,7 @@ export function startLive(stage) {
     } else if (s.phase === "playing" && goal !== null) {
       word = `Listen to ${s.asked}`;
     } else if (s.phase === "get_ready" && goal !== null) {
-      word = `Watch the throat sing ${s.asked}`;
+      word = `Watch John sing ${s.asked}`;
     } else if (s.phase === "feedback") {
       word = verdict(s.sung?.cents ?? null).word;
       mood = verdict(s.sung?.cents ?? null).tone === "ok" ? "good" : "off";
@@ -370,6 +374,28 @@ export function startLive(stage) {
       }
       previous = point;
     }
+    // John's pitch, while he shows the note: a dashed dark line with his name at its end.
+    ctx.setLineDash([row * 0.3, row * 0.22]);
+    ctx.strokeStyle = "#4b5039";
+    ctx.lineWidth = Math.max(3, row * 0.14);
+    ctx.beginPath();
+    let john = null;
+    for (const [t, midi] of johnPitch) {
+      if (t < now - LANE_S * LANE_NOW - 0.5) continue;
+      const point = { x: x(t), y: y(clamp(foldTo(midi, aimAt(t) ?? reference), LOW - 0.3, HIGH + 0.3)), t };
+      if (john && point.t - john.t < 0.25) ctx.lineTo(point.x, point.y);
+      else ctx.moveTo(point.x, point.y);
+      john = point;
+    }
+    ctx.stroke();
+    ctx.setLineDash([]);
+    if (john && now - john.t < 3) {
+      ctx.fillStyle = "#4b5039";
+      ctx.textAlign = "left";
+      ctx.font = `650 ${Math.round(clamp(row * 0.55, 10, 18))}px -apple-system, BlinkMacSystemFont, sans-serif`;
+      ctx.fillText("John", john.x + 8, john.y - row * 0.45);
+    }
+
     const last = livePitch(readings, now);
     if (last && previous) {
       const asked = goal;

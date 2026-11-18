@@ -85,6 +85,7 @@ PIANO_TAIL_S = 0.2  # the software piano dies away this fast once its key is up 
 # A key the arm leaves resting down still fades: halving every 0.45 s (keys_synth.HOLD_HALF_S), it is about
 # 40 dB down after this long. After that the piano no longer covers the voice, key up or not.
 HELD_QUIET_S = 2.5
+JOHN_S = 2.6  # beginner mode: how long John has to sing a note on the display (he sings 1.6 s)
 CHECK_WORDS = {"check", "pitch", "tune", "listen", "hear"}  # "check my pitch", "am I in tune", "listen to me"
 # Words that name a tune, as speech to text tends to deliver them. A tune counts even without "play".
 SONG_WORDS = {
@@ -608,8 +609,8 @@ class Teacher:
         show_s: float = 0.0,
     ) -> None:
         self.send, self.hands, self.audio, self.listen_s = send, hands, audio, listen_s
-        # Chimera shows first (web/chimera): after the arm, the display's 3D throat sings the note on la
-        # for this long, and only then does the user's window open, so the microphone never hears it. 0: off.
+        # Beginner mode: after the arm, John (the display's singing head, web/chimera) sings the note on its
+        # name for this long, then the arm plays it again and the user sings along. 0: off.
         self.show_s = show_s
         self.voice = Speedup(voice_speed)
         self.focus = focus  # Voice Focus for the singing, apart from the one on the live microphone
@@ -699,6 +700,10 @@ class Teacher:
         """The arm plays a note and the user sings along, holding it on after the piano stops. SwiftF0 measures
         only the singing after the piano is silent: while it rings, the microphone hears the piano too.
         Returns the fact and what to say."""
+        if self.show_s > 0:  # beginner mode: the arm plays it, John shows how, then the usual turn
+            await asyncio.to_thread(self.hands.play, [note])
+            emit("phase", name="get_ready", text="John shows how", note=note)
+            await asyncio.sleep(self.show_s)
         loop = asyncio.get_running_loop()
         sounded = asyncio.Event()
         playing = asyncio.ensure_future(
@@ -708,13 +713,6 @@ class Teacher:
         await asyncio.wait([playing, waiting], return_when=asyncio.FIRST_COMPLETED)
         waiting.cancel()
         self.last_note = note
-        if self.show_s > 0:
-            await playing  # the whole note, then Chimera sings it on the display, then the user
-            emit("phase", name="get_ready", text="Chimera shows how", note=note)
-            await asyncio.sleep(self.show_s)
-            emit("your_turn", note=note, seconds=self.listen_s)
-            sung = await self.audio.record(self.listen_s, lambda audio: keys_listen.voiced_seconds(audio, RATE) >= HOLD_S)
-            return await self.judged(note, sung)
         # The window opens the moment the key sounds: sing along. Up to nine seconds; it closes early once
         # it has HOLD_S of clear voice after the piano.
         start = time.perf_counter()
@@ -748,7 +746,7 @@ class Teacher:
         return f"The user sang {note} and was {where}.", result["answer"]
 
     def shown(self) -> str:
-        return "Chimera on the screen shows how on la, then " if self.show_s > 0 else "then "
+        return "John, the singing head on the screen, sings it to show how, the arm plays it again, and " if self.show_s > 0 else "then "
 
     async def check(self, delegation_id: str | None, note: str) -> None:
         """One note, on request: "check my pitch", "am I in tune on sol"."""
@@ -773,7 +771,8 @@ class Teacher:
             f"Start the lesson like a strict coach. Tell the user: the arm plays a note, starting with "
             f"{rounds[0][0]}; "
             + (
-                "then Chimera, the throat on the screen, sings it on la to show how; then they sing it back on la and hold it. "
+                "then John, the singing head on the screen, sings it to show how; then the arm plays it again and they "
+                "sing along on la and hold it. "
                 if self.show_s > 0
                 else "as soon as they hear it they sing along on la and hold it. "
             )
@@ -864,7 +863,7 @@ async def run(args: argparse.Namespace) -> None:
         async def send(event: dict[str, Any]) -> None:
             await socket.send(json.dumps(event))
 
-        teacher = Teacher(send, hands, audio, voice_speed=args.cartoon, focus=focus, show_s=args.chimera_show)
+        teacher = Teacher(send, hands, audio, voice_speed=args.cartoon, focus=focus, show_s=JOHN_S if args.beginner else 0.0)
         await send(
             {
                 "type": "session.start",
@@ -932,11 +931,9 @@ def main(argv: list[str] | None = None) -> None:
     )
     parser.add_argument("--no-voice-focus", dest="voice_focus", action="store_false")
     parser.add_argument(
-        "--chimera-show",
-        type=float,
-        default=0.0,
-        metavar="SECONDS",
-        help="After the arm, the display's 3D throat (web/chimera) sings the note this long before you sing (try 2.6; 0 = off)",
+        "--beginner",
+        action="store_true",
+        help="John, the display's singing head (web/chimera), sings each note after the arm; then the arm plays it again",
     )
     parser.add_argument(
         "--full-duplex",

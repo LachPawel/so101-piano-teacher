@@ -8,7 +8,7 @@ test("the big words say whose turn it is", () => {
   assert.equal(headline({ phase: "idle" }).html, "Make a little<br>music.");
   assert.deepEqual(headline({ phase: "playing", asked: "mi" }), { html: "The arm<br>plays <em>mi</em>.", tone: "arm" });
   assert.equal(headline({ phase: "get_ready", asked: "sol" }).tone, "ready");
-  assert.deepEqual(headline({ phase: "your_turn", asked: "la" }), { html: "Sing <em>la</em><br>now.", tone: "sing" });
+  assert.deepEqual(headline({ phase: "your_turn", asked: "la" }), { html: "Your turn:<br>sing <em>la</em>.", tone: "sing" });
   assert.equal(headline({ phase: "feedback", asked: "la", sung: { cents: -30 } }).html, "In tune.<br>Well done.");
   assert.equal(headline({ phase: "feedback", asked: "la", sung: { cents: -130 } }).html, "A little<br>higher.");
   assert.equal(headline({ phase: "feedback", asked: "la", sung: { cents: null } }).tone, "none");
