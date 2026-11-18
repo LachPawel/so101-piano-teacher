@@ -1033,21 +1033,15 @@ def test_voice_teacher_routes_requests_to_the_arm_and_the_pitch_check() -> None:
         assert "cents sharp. Tell them that, then: A little lower." in facts[1]
         assert facts[3] == "The user sang sol and was in tune. Tell them that, then: Well done."
 
-        # A piano that keeps ringing is never mistaken for singing: no measurement, one more go, then stop.
+        # A key the arm leaves resting down does not stop the measurement: that note fades within seconds.
         await teacher.on_event({"type": "session.output_transcript.delta", "delta": "Ok."})
         arm.asked, sent[:], arm.held = [], [], True
-        audio.sung = [np.zeros(16000, dtype=np.float32), np.zeros(16000, dtype=np.float32)]
+        audio.sung = [kpj.sung_tone(hz(57), rng)]  # la, an octave down
         await user_says("check my pitch on la")
         arm.held = False
-        assert arm.asked == [["la"], ["la"]]
+        assert arm.asked == [["la"]]
         facts = [e["content"] for e in sent if e["type"] == "session.commentary.append"]
-        assert (
-            facts[1]
-            == facts[2]
-            == (
-                "The piano kept ringing after la, so the singing could not be measured. Tell them that, then: Once more."
-            )
-        )
+        assert facts[1] == "The user sang la and was in tune. Tell them that, then: Well done."
 
         await teacher.on_event({"type": "session.output_audio.delta", "delta": keys_voice.to_pcm(np.ones(4))})
         assert audio.said[-1] == pytest.approx(np.ones(4), abs=1e-3)
@@ -1233,7 +1227,9 @@ def test_display_draws_the_sung_pitch_live_during_your_turn() -> None:
 
     # The microphone is the user only in their turn, once the piano is silent: never the piano or the teacher.
     assert not keys_ui.listening({"phase": "playing", "keys_down": []}, 10.0, 0.0)
-    assert not keys_ui.listening({"phase": "your_turn", "keys_down": [64]}, 10.0, 0.0)
+    assert not keys_ui.listening({"phase": "your_turn", "keys_down": [64], "press": {"t": 9.0}}, 10.0, 0.0)
+    # A key the arm leaves resting down has faded after a few seconds: then it is you again.
+    assert keys_ui.listening({"phase": "your_turn", "keys_down": [64], "press": {"t": 7.0}}, 10.0, 0.0)
     assert not keys_ui.listening({"phase": "your_turn", "keys_down": []}, 10.0, 10.1)
     assert keys_ui.listening({"phase": "your_turn", "keys_down": []}, 10.2, 10.1)
 

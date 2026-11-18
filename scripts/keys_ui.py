@@ -55,6 +55,7 @@ NAMES = ("C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B")
 LIVE_WINDOW_S = 0.4  # the newest sound the live pitch is read from
 EDGE_FRAMES = 3  # SwiftF0's last few frames run off the end of the sound and are never sure
 PIANO_TAIL_S = 0.2  # the software piano dies away this fast once its key is up
+HELD_QUIET_S = 2.5  # a key left resting down has faded about 40 dB this long after the press
 KEEP_PITCH_S = 15.0  # how much pitch history a newly opened page gets
 
 
@@ -323,7 +324,10 @@ def follow_ears(hub: Hub, device: str, stop: threading.Event) -> None:
 def listening(state: dict[str, Any], now: float, piano_until: float) -> bool:
     """Whether what the microphone hears now is the user: only in their turn, once the piano is silent.
     Before that the room holds the piano and the teacher's voice, which are not the user's pitch."""
-    return state["phase"] == "your_turn" and not state["keys_down"] and now >= piano_until
+    if state["phase"] != "your_turn" or now < piano_until:
+        return False
+    press = state.get("press")
+    return not state["keys_down"] or (press is not None and now - press["t"] >= HELD_QUIET_S)
 
 
 def follow_voice(hub: Hub, mic: str | None, stop: threading.Event) -> None:

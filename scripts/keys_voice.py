@@ -60,6 +60,9 @@ ENV_FILE = Path.home() / "code" / "codex" / ".env"
 CLIPS = Path(__file__).resolve().parent.parent / "outputs" / "keys_voice" / "sung"
 LESSON_NOTES = ["mi", "sol", "la"]  # the keys the policy presses most reliably
 PIANO_TAIL_S = 0.2  # the software piano dies away this fast once its key is up (keys_synth.RELEASE_HALF_S)
+# A key the arm leaves resting down still fades: halving every 0.45 s (keys_synth.HOLD_HALF_S), it is about
+# 40 dB down after this long. After that the piano no longer covers the voice, key up or not.
+HELD_QUIET_S = 2.5
 CHECK_WORDS = {"check", "pitch", "tune", "listen", "hear"}  # "check my pitch", "am I in tune", "listen to me"
 # Words that name a tune, as speech to text tends to deliver them. A tune counts even without "play".
 SONG_WORDS = {
@@ -630,13 +633,11 @@ class Teacher:
             return bool(cut) and keys_listen.voiced_seconds(audio[cut[0] :], RATE) >= 1.0
 
         recording = asyncio.ensure_future(self.audio.record(self.listen_s, enough))
-        await playing  # returns once the key is up and the piano silent
-        cut.append(int((time.perf_counter() - start + PIANO_TAIL_S) * RATE))
-        sung = await recording
-        if getattr(self.hands, "keys_down", set)():  # a key still held keeps the piano ringing over the voice
-            emit("sung", note=note, cents=None, answer="The piano was still ringing. Once more.")
-            return f"The piano kept ringing after {note}, so the singing could not be measured.", "Once more."
-        sung = sung[cut[0] :]
+        await playing  # returns once the arm has lifted off the key, or tried to
+        # The piano is quiet once the key is up, or once a key left resting down has faded: whichever is first.
+        quiet = min(time.perf_counter(), start + HELD_QUIET_S) - start + PIANO_TAIL_S
+        cut.append(int(quiet * RATE))
+        sung = (await recording)[cut[0] :]
         result = await asyncio.to_thread(keys_listen.check_note, sung, keys_listen.MIDI[note], RATE)
         keep_clip(note, sung, result)
         emit("sung", note=note, cents=result["cents"], answer=result["answer"])
