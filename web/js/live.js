@@ -230,26 +230,26 @@ export function startLive(stage) {
     const heard = livePitch(readings, now);
     const cents = heard && goal !== null ? 100 * (foldTo(heard.midi, goal) - goal) : null;
 
-    // The words over the lane: what to do right now.
-    let word = "Sing along";
+    // The words over the lane: what to do right now. It listens only in your turn, after the piano.
+    let word = "Your turn comes after the arm plays";
     let mood = "";
-    if (heard && heard.piano) {
-      word = goal !== null ? `Sing along with ${state.asked}` : "The piano";
-    } else if (heard && goal === null) {
-      word = noteName(Math.round(heard.midi));
-    } else if (cents !== null) {
-      const good = Math.abs(cents) <= IN_TUNE_CENTS;
-      word = good ? "In tune ✓" : cents < 0 ? "↑ Higher" : "↓ Lower";
-      mood = good ? "good" : "off";
-    } else if (goal !== null) {
-      word = `Sing ${state.asked}`;
-    } else if (!s.mic_on) {
-      word = "No microphone";
+    if (s.phase === "your_turn") {
+      if (s.keys_down.length) word = `Listen to ${s.asked}…`;
+      else if (cents !== null) {
+        const good = Math.abs(cents) <= IN_TUNE_CENTS;
+        word = good ? "In tune ✓" : cents < 0 ? "↑ Higher" : "↓ Lower";
+        mood = good ? "good" : "off";
+      } else word = s.mic_on ? `Sing ${s.asked} now` : "No microphone";
+    } else if (s.phase === "playing" && goal !== null) {
+      word = `Listen to ${s.asked}`;
+    } else if (s.phase === "feedback") {
+      word = verdict(s.sung?.cents ?? null).word;
+      mood = verdict(s.sung?.cents ?? null).tone === "ok" ? "good" : "off";
     }
     const laneWord = $("lane-word");
     if (laneWord.textContent !== word) laneWord.textContent = word;
     laneWord.dataset.mood = mood;
-    $("lane").dataset.active = String(goal !== null || !!heard);
+    $("lane").dataset.active = String(s.phase === "your_turn" || s.phase === "feedback");
 
     // The listening window of a lesson turn.
     const turn = s.turn && s.turn.note === s.asked ? s.turn : null;

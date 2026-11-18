@@ -683,6 +683,17 @@ class Teacher:
         )
 
 
+REACHY_SPEAKER = "Reachy Mini Audio"
+
+
+def reachy_speaker() -> str | None:
+    """Reachy Mini's own speaker when it is plugged in: the voice then comes out of the robot, not the laptop."""
+    import sounddevice as sd
+
+    names = [d["name"] for d in sd.query_devices() if d["max_output_channels"]]
+    return REACHY_SPEAKER if REACHY_SPEAKER in names else None
+
+
 async def pump_microphone(audio: Audio, teacher: Teacher, send: Send, clean: Any, full_duplex: bool) -> None:
     """Send the microphone to GPT-Live-1, except while it must not listen."""
     silence = np.zeros(BLOCK, dtype=np.float32)
@@ -702,7 +713,9 @@ async def run(args: argparse.Namespace) -> None:
     from websockets.asyncio.client import connect
 
     loop = asyncio.get_running_loop()
-    audio = Audio(args.mic, args.speaker, loop)
+    speaker = args.speaker or reachy_speaker()
+    print(f"Teacher's voice: {speaker or 'the system output'}", flush=True)
+    audio = Audio(args.mic, speaker, loop)
     hands: Hands = SpeakerHands(audio) if args.no_arm else PolicyHands(args.model, args.robot_port, args.lift)
     clean = None
     if args.voice_focus:
@@ -768,7 +781,9 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--model", default="flow", choices=list(keys_play.MODELS), help="Policy for the arm")
     parser.add_argument("--robot-port", default="/dev/tty.usbmodem5B415331661")
     parser.add_argument("--mic", help="Microphone (default: the system input)")
-    parser.add_argument("--speaker", help="Speaker (default: the system output)")
+    parser.add_argument(
+        "--speaker", help=f'Speaker (default: "{REACHY_SPEAKER}" when plugged in, else the system output)'
+    )
     parser.add_argument(
         "--voice", default="meridian", help="GPT-Live-1 voice. Male: meridian, ripple, stone, vesper, cinder"
     )

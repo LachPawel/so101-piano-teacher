@@ -1222,6 +1222,12 @@ def test_display_draws_the_sung_pitch_live_during_your_turn() -> None:
     with hub.cond:
         assert [r[0] for r in hub.pitch_since(0)[1]] == [100.0 + keys_ui.KEEP_PITCH_S + 1]
 
+    # The microphone is the user only in their turn, once the piano is silent: never the piano or the teacher.
+    assert not keys_ui.listening({"phase": "playing", "keys_down": []}, 10.0, 0.0)
+    assert not keys_ui.listening({"phase": "your_turn", "keys_down": [64]}, 10.0, 0.0)
+    assert not keys_ui.listening({"phase": "your_turn", "keys_down": []}, 10.0, 10.1)
+    assert keys_ui.listening({"phase": "your_turn", "keys_down": []}, 10.2, 10.1)
+
     # A turn to sing, and the arm finishing while you already sing does not end it.
     hub.event({"kind": "your_turn", "note": "mi", "seconds": 6.0})
     turn = hub.state["turn"]

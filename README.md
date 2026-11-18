@@ -67,13 +67,14 @@ uv run --with-requirements scripts/requirements-keys.txt scripts/keys_ui.py
 ```
 
 ```bash
-uv run --with-requirements scripts/requirements-keys.txt --with aic-sdk==3.4.0 scripts/keys_voice.py --mic "MacBook Pro Microphone" --speaker "MacBook Pro Speakers"
+uv run --with-requirements scripts/requirements-keys.txt --with aic-sdk==3.4.0 scripts/keys_voice.py --mic "MacBook Pro Microphone"
 ```
 
 Once, with Reachy looking at the keys as in training: `scripts/keys_reachy.py save`. The display then
 holds that head pose while the arm plays and moves Reachy otherwise.
 
-Name the microphone and speaker: Bluetooth headphones that connect take over the Mac's defaults. The display
+The teacher speaks through Reachy Mini's own speaker when it is plugged in (`--speaker` to choose another).
+Name the microphone: Bluetooth headphones that connect take over the Mac's default. The display
 needs no internet; `scripts/keys_ui.py --demo` shows a made-up session without the rig.
 
 ## Things you will need to change for your own rig

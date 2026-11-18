@@ -1,19 +1,24 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" fill="none" stroke-linecap="round" stroke-linejoin="round">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" fill="#fff" stroke="#1d1f1a" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
   <title>SO-101 Piano Teacher</title>
-  <!-- Three piano keys, the middle one pressed -->
-  <rect x="5" y="45" width="54" height="14" rx="3" fill="#fffcf5" stroke="#282b23" stroke-width="2.5"/>
-  <path d="M23 45v14M41 45v14" stroke="#282b23" stroke-width="2"/>
-  <rect x="24.5" y="46.5" width="15" height="11" rx="1.5" fill="#f6d985"/>
-  <!-- The SO-101 arm: base, shoulder, elbow, finger on the key -->
-  <path d="M10 45v-4h8v4" stroke="#637747" stroke-width="2.5"/>
-  <path d="M14 41L18 21L31 29L32 44" stroke="#637747" stroke-width="4.5"/>
-  <circle cx="18" cy="21" r="3" fill="#637747"/>
-  <circle cx="31" cy="29" r="2.6" fill="#637747"/>
-  <!-- Reachy Mini: head, two eyes, two antennas -->
-  <path d="M44 13c-1-4-3-7-6-9M52 13c1-4 3-7 6-9" stroke="#282b23" stroke-width="2"/>
-  <rect x="38" y="12" width="20" height="15" rx="7" fill="#fffcf5" stroke="#282b23" stroke-width="2.5"/>
-  <circle cx="44" cy="19.5" r="2.4" fill="#282b23"/>
-  <circle cx="52" cy="19.5" r="2.4" fill="#282b23"/>
-  <path d="M48 27v5" stroke="#282b23" stroke-width="2.5"/>
-  <path d="M43 36c0-3 2-4 5-4s5 1 5 4" stroke="#d87827" stroke-width="2.5"/>
+  <!-- The SO-101 arm, behind: base, upper arm, forearm, gripper down on a key. White limbs with a black edge. -->
+  <g fill="none">
+    <path d="M12 44 L16 17 L29 24 L29 37" stroke="#1d1f1a" stroke-width="8.4"/>
+    <path d="M12 44 L16 17 L29 24 L29 37" stroke="#fff" stroke-width="4.2"/>
+  </g>
+  <rect x="7" y="39" width="11" height="9" rx="2"/>
+  <circle cx="16" cy="17" r="3.4"/>
+  <circle cx="29" cy="24" r="3"/>
+  <path d="M26.5 36.5h5v5.5h-5z"/>
+  <!-- The keyboard -->
+  <rect x="3" y="47" width="58" height="13" rx="2.5"/>
+  <path d="M12.7 47v13M22.3 47v13M32 47v13M41.7 47v13M51.3 47v13" stroke-width="1.6"/>
+  <!-- Reachy Mini: dome body, round head, two spring antennas -->
+  <path d="M38 47.5V40a11 11 0 0 1 22 0v7.5"/>
+  <path d="M41 13.5L36.5 3.5M56 13.5L60.5 3.5" fill="none"/>
+  <path d="M38.2 8.6l2.4-1.1M37.4 6.8l2.4-1.1M57.4 7.5l2.4 1.1M58.2 5.7l2.4 1.1" fill="none" stroke-width="1.6"/>
+  <ellipse cx="48.5" cy="21.5" rx="11.5" ry="9"/>
+  <circle cx="44" cy="21" r="3"/>
+  <circle cx="53" cy="21" r="3"/>
+  <circle cx="44" cy="21" r="0.9" fill="#1d1f1a" stroke="none"/>
+  <circle cx="53" cy="21" r="0.9" fill="#1d1f1a" stroke="none"/>
 </svg>

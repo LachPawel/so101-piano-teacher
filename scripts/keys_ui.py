@@ -314,9 +314,14 @@ def follow_ears(hub: Hub, device: str, stop: threading.Event) -> None:
         print(f"No ears picture for the display ({type(error).__name__}: {error}).")
 
 
+def listening(state: dict[str, Any], now: float, piano_until: float) -> bool:
+    """Whether what the microphone hears now is the user: only in their turn, once the piano is silent.
+    Before that the room holds the piano and the teacher's voice, which are not the user's pitch."""
+    return state["phase"] == "your_turn" and not state["keys_down"] and now >= piano_until
+
+
 def follow_voice(hub: Hub, mic: str | None, stop: threading.Event) -> None:
-    """Read the pitch at the microphone twenty times a second, all the time: you can sing along with every
-    note the arm plays and see where you are."""
+    """In the user's turn, read the pitch at the microphone twenty times a second. Silent otherwise."""
     try:
         import keys_listen
         import sounddevice as sd
@@ -333,16 +338,22 @@ def follow_voice(hub: Hub, mic: str | None, stop: threading.Event) -> None:
 
         with sd.InputStream(device=mic, channels=1, samplerate=rate, dtype="float32", callback=callback):
             hub.set(mic_on=True)
+            heard_last = False
             while not stop.is_set():
                 time.sleep(0.05)
+                now = time.time()
+                if not listening(hub.state, now, hub.piano_until):
+                    if heard_last:  # one empty reading ends the line
+                        hub.add_pitch(now, None, 0.0)
+                        heard_last = False
+                    continue
                 with lock:
                     audio = ring.copy()
                 result = tracker.detect(audio, rate)
                 hz, _cents = live_pitch(result.pitch_hz, result.confidence, 69)
-                now = time.time()
-                piano = bool(hub.state["keys_down"]) or now < hub.piano_until
                 level = float(np.sqrt(np.mean(audio[-rate // 10 :] ** 2)))
-                hub.add_pitch(now, None if hz is None else hz_to_midi(hz), level, piano)
+                hub.add_pitch(now, None if hz is None else hz_to_midi(hz), level)
+                heard_last = True
     except (Exception, SystemExit) as error:  # noqa: BLE001  the display still works without the microphone
         print(f"No live pitch for the display ({type(error).__name__}: {error}).")
 
@@ -356,12 +367,15 @@ def demo(hub: Hub, stop: threading.Event) -> None:
         start, sung = time.time(), 64.0
         while not stop.is_set():
             now = time.time()
+            if not listening(hub.state, now, hub.piano_until):
+                sung = 60.5  # starts each turn a little low, then finds the note
+                time.sleep(0.05)
+                continue
             if target[0] is not None:
-                sung += (target[0] - 0.2 - sung) * 0.18
-            singing = target[0] is not None and int((now - start) / 2.3) % 4 != 3  # breathes now and then
-            piano = bool(hub.state["keys_down"]) or now < hub.piano_until
+                sung += (target[0] - 0.2 - sung) * 0.12
+            singing = int((now - start) / 2.3) % 4 != 3  # breathes now and then
             wobble = 0.08 * np.sin(now * 33)
-            hub.add_pitch(now, sung + wobble if singing else None, 0.05 if singing else 0.002, piano)
+            hub.add_pitch(now, sung + wobble if singing else None, 0.05 if singing else 0.002)
             time.sleep(0.05)
 
     threading.Thread(target=voice, daemon=True).start()
