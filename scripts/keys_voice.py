@@ -675,6 +675,7 @@ class Teacher:
         # the user sings along. 0: off.
         self.show_s = show_s
         self.strict = True  # the coach; False for the relaxed jukebox of --songs
+        self.warmed = False  # the warm-up or a lesson has been done: a bare "yes" now means the lesson
         self.voice = Speedup(voice_speed)
         self.focus = focus  # Voice Focus for the singing, apart from the one on the live microphone
         self.rounds = rounds  # rounds of three notes in one lesson, before asking "another one?"
@@ -726,7 +727,8 @@ class Teacher:
             and self.offered
             and set(re.findall(r"[a-z]+", said.lower())) & AGREE_WORDS
         ):
-            command = kc.Command("teach")  # "yes!" to the offer of a lesson
+            # "yes!", "ready": to what the teacher offered, which is the warm-up first and the lesson after it
+            command = kc.Command("teach" if self.warmed else "warmup")
         print(f'\n[you] "{said}" -> {command.kind}', flush=True)
         emit("said", text=said, read_as=command.kind)
         if command.kind == "stop":
@@ -783,7 +785,7 @@ class Teacher:
         finally:
             emit("mode", name="")
         self.last_note = WARMUP_NOTES[-1]
-        self.offered = True
+        self.offered = self.warmed = True
         await self.tell(
             delegation_id,
             "The warm-up is done. Say one short line about it, then offer the lesson right away: three notes, each one checked.",
@@ -886,7 +888,7 @@ class Teacher:
     async def lesson(self, delegation_id: str | None, tries: int = 2) -> None:
         """Rounds of three notes, a new order each round. The teacher cheers before every note and, at the
         end, offers another lesson right away: a "yes" is enough to go on."""
-        self.offered = False
+        self.offered, self.warmed = False, True
         rounds = [LESSON_ROUNDS[(self.rounds_done + i) % len(LESSON_ROUNDS)] for i in range(self.rounds)]
         await self.audio.finished_speaking(starts_within=1.5)  # let its own "On it!" finish first
         await self.tell(

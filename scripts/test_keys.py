@@ -986,6 +986,8 @@ def test_voice_teacher_routes_requests_to_the_arm_and_the_pitch_check() -> None:
 
         audio, arm = FakeAudio(), FakeArm()
         teacher = keys_voice.Teacher(send, arm, audio, listen_s=0.0, rounds=1)
+        assert not teacher.warmed
+        teacher.warmed = True  # as after the warm-up: a bare "yes" below means the lesson
 
         async def user_says(text: str) -> None:
             await teacher.on_event({"type": "session.input_transcript.delta", "delta": text})
@@ -1073,6 +1075,12 @@ def test_voice_teacher_routes_requests_to_the_arm_and_the_pitch_check() -> None:
         await teacher.on_event({"type": "session.output_transcript.delta", "delta": "Ok."})
         await user_says("I have sung before, warm up again")
         assert teacher.show_s == 0.0
+
+        # Before any warm-up or lesson, a bare "ready" to the teacher's offer is the warm-up, then the lesson.
+        await teacher.on_event({"type": "session.output_transcript.delta", "delta": "Ok."})
+        arm.asked, sent[:], teacher.warmed, teacher.offered = [], [], False, True
+        await user_says("Ready!")
+        assert arm.asked == [keys_voice.WARMUP_NOTES] and teacher.warmed and teacher.offered
 
         # Band mode: the arm loops the riff's first line; nothing is recorded or judged.
         await teacher.on_event({"type": "session.output_transcript.delta", "delta": "Ok."})
