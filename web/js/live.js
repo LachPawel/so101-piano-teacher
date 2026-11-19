@@ -65,6 +65,7 @@ export function headline(state) {
       if (state.mode === "warmup") return { html: "Warm-up.<br>Sing along.", tone: "sing" };
       return note ? { html: `The arm<br>plays ${note}.`, tone: "arm" } : { html: "The arm<br>plays.", tone: "arm" };
     case "get_ready":
+      if (typeof state.slide === "number") return { html: `John slides<br>${state.slide < 0 ? "up" : "down"} to ${note ?? ""}.`, tone: "ready" };
       return { html: `John sings ${note ?? ""}.<br>Watch.`, tone: "ready" };
     case "handover": // the teacher says "Now your turn"; the arm has not started yet
     case "your_turn":
@@ -124,7 +125,10 @@ export function startLive(stage) {
 
   const johnPitch = []; // John's pitch while he sings: [t, midi]
   const coach = startChimera((f0) => {
-    johnPitch.push([Date.now() / 1000, 69 + 12 * Math.log2(f0 / 440)]);
+    const midi = 69 + 12 * Math.log2(f0 / 440);
+    const goal = target();
+    if (goal !== null && Math.abs(midi - goal) > 5) return; // his voice starting up, not a note he is singing
+    johnPitch.push([Date.now() / 1000, midi]);
     while (johnPitch.length && johnPitch[0][0] < Date.now() / 1000 - LANE_S - 2) johnPitch.shift();
   }); // John, the singing head of beginner mode: null with ?chimera=0
   let onNoteSince = null; // when your live pitch came onto the note and stayed, or null

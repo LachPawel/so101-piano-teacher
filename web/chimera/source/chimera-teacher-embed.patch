@@ -311,16 +311,18 @@ index 79b6a3e..75c45b7 100644
      if (this.small.width !== w || this.small.height !== h) {
 diff --git a/src/ui/teacher/Coach.tsx b/src/ui/teacher/Coach.tsx
 new file mode 100644
-index 0000000..4bab1f4
+index 0000000..1e83139
 --- /dev/null
 +++ b/src/ui/teacher/Coach.tsx
-@@ -0,0 +1,258 @@
+@@ -0,0 +1,277 @@
 +/**
 + * The coach embed, "John": the 3D head. He sings one note when the page around asks, on its
 + * solfège name (do re mi fa sol la, from exact IPA), so you see the tongue, jaw and lips before
 + * your turn; while he sings, his pitch goes to the page ("pitch" messages) to draw on its lane. Another page shows it in an iframe and talks to it with postMessage (same origin only):
 + *
-+ *   in   { type: "sing", midi, word?, seconds = 1.6, name?, backing? }  sing one note; name "mi" sings mi, else word, else "la"
++ *   in   { type: "sing", midi, word?, seconds = 1.6, name?, backing?, from? }  sing one note; name "mi" sings mi, else
++ *                                                                      word, else "la"; `from` (MIDI, may be between
++ *                                                                      keys): start there and slide to the note
 + *        { type: "stop" }                                              stop singing
 + *        { type: "idle", text? }                                       clear the note, say something else
 + *        { type: "body", body: "male" | "female" | "child" }
@@ -379,6 +381,7 @@ index 0000000..4bab1f4
 +  la: "Lah. Tongue flicks up for the L, then the jaw falls.",
 +};
 +const ANY_QUIP = "Copy my throat. It's open source.";
++const SLIDE_AT_MS = 650; // on a slide: this long on the pitch they sang, then off to the note
 +const AFTER = ["Same shape, your own throat.", "I'll be watching. I have no eyelids.", "Copy me. I'm told it's flattering."];
 +const cap = (w: string) => w.charAt(0).toUpperCase() + w.slice(1);
 +
@@ -396,6 +399,8 @@ index 0000000..4bab1f4
 +  name?: string;
 +  /** a backing note (band mode): no "your turn" after it */
 +  backing?: boolean;
++  /** start on this pitch (MIDI, may be between keys) and slide to `midi`: "you were here, the note is there" */
++  from?: number;
 +}
 +
 +type Caption = { line: string; quip: string; mood: "wait" | "sing" | "after" };
@@ -433,6 +438,7 @@ index 0000000..4bab1f4
 +    useStore.getState().setView({ ...VIEW, threeD: true });
 +    let timer = 0;
 +    let afterTimer = 0;
++    let slideTimer = 0;
 +    let turn = 0;
 +    let singing = false;
 +    // his pitch for the page's lane, from the engine's telemetry
@@ -444,6 +450,7 @@ index 0000000..4bab1f4
 +    const release = () => {
 +      singing = false;
 +      clearTimeout(timer);
++      clearTimeout(slideTimer);
 +      const st = useStore.getState();
 +      for (const n of st.heldNotes) st.noteOff(n);
 +    };
@@ -461,15 +468,27 @@ index 0000000..4bab1f4
 +      release();
 +      clearTimeout(afterTimer);
 +      const exact = SOLFEGE[shown];
-+      if (exact) useSing.setState({ lyrics: shown, syllables: [exact], cursor: 0 });
-+      else useSing.getState().setLyrics(shown);
-+      st.noteOn(ask.midi, 96);
++      const slide = ask.from !== undefined && Math.abs(ask.from - ask.midi) >= 0.3 ? ask.from : null;
++      if (slide !== null) {
++        // the syllable on the pitch they sang, then the same vowel carried to the note (a melisma)
++        const glided: Syllable = { ...(exact ?? SOLFEGE.la), text: "~", onset: [], coda: [], melisma: true };
++        useSing.setState({ lyrics: `${shown} -`, syllables: [exact ?? SOLFEGE.la, glided], cursor: 0 });
++        st.noteOn(slide, 96);
++        slideTimer = window.setTimeout(() => useStore.getState().noteOn(ask.midi, 96), SLIDE_AT_MS);
++        const up = slide < ask.midi;
++        setCaption({ line: `${cap(shown)}: you were ${up ? "under" : "over"}…`, quip: up ? "Slide up, like asking a question. Laaa?" : "Slide down, like a sigh after a long day.", mood: "sing" });
++      } else {
++        if (exact) useSing.setState({ lyrics: shown, syllables: [exact], cursor: 0 });
++        else useSing.getState().setLyrics(shown);
++        st.noteOn(ask.midi, 96);
++        setCaption({ line: `${cap(shown)}! (${noteName(ask.midi)})`, quip, mood: "sing" });
++      }
 +      singing = true;
-+      setCaption({ line: `${cap(shown)}! (${noteName(ask.midi)})`, quip, mood: "sing" });
 +      tell("singing", { midi: ask.midi });
 +      const my = ++turn;
 +      timer = window.setTimeout(() => {
-+        useStore.getState().noteOff(ask.midi);
++        const now = useStore.getState();
++        for (const n of now.heldNotes.slice().reverse()) now.noteOff(n);
 +        singing = false;
 +        tell("sang", { midi: ask.midi });
 +        if (ask.backing) return;
@@ -485,7 +504,7 @@ index 0000000..4bab1f4
 +      const m = e.data as Record<string, unknown>;
 +      if (m.type === "sing" && typeof m.midi === "number" && m.midi >= 24 && m.midi <= 96) {
 +        setAsleep(false);
-+        sing({ midi: Math.round(m.midi), word: typeof m.word === "string" && m.word ? m.word.toLowerCase() : "la", seconds: typeof m.seconds === "number" ? m.seconds : 1.6, name: typeof m.name === "string" ? m.name : undefined, backing: m.backing === true });
++        sing({ midi: Math.round(m.midi), word: typeof m.word === "string" && m.word ? m.word.toLowerCase() : "la", seconds: typeof m.seconds === "number" ? m.seconds : 1.6, name: typeof m.name === "string" ? m.name : undefined, backing: m.backing === true, from: typeof m.from === "number" && m.from >= 24 && m.from <= 96 ? m.from : undefined });
 +      } else if (m.type === "stop") {
 +        turn++;
 +        release();

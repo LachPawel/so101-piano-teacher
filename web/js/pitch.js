@@ -2,7 +2,7 @@
 // A port of sung_pitch and judge_pitch in scripts/keys_companion.py, so the web page and the
 // Python teacher agree. Pure functions: no browser APIs, so the tests run in Node.
 
-export const IN_TUNE_CENTS = 50; // half a semitone either way counts as in tune
+export const IN_TUNE_CENTS = 40; // within 40 cents, any octave, counts as in tune (keys_voice.JUDGE_CENTS)
 const NOTE_NAMES = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"];
 
 export function midiHz(midi) {

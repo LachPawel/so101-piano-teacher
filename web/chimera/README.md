@@ -44,9 +44,17 @@ turn" out loud; and only then does the arm play the note again, which opens your
 your turn, so the microphone never hears him. Say "I've sung before" or "skip John" to go straight to
 the notes, "I'm a beginner" to get him back; `keys_voice.py --direct` starts without him.
 
-A note counts only when it is right and held in tune for one full second in one go: crossing it on the way
-somewhere else gets "Hold it longer", with how long you were on it and off it. The lane counts the hold
+A note counts only when it is within 40 cents (any octave) and held there for one full second in one go:
+crossing it on the way somewhere else does not count. The verdict comes from the raw microphone, not Voice
+Focus, which erased the singer in 9 of 55 turns on 18 November and passed a note sung a fourth too low in
+another. A near miss gets "a little higher/lower"; "hold it longer" is kept for a note centred on pitch and
+not sustained; a clear miss onto another note of the scale is named ("you were really singing do"). The lane counts the hold
 live ("Hold it… 0.6 s", then "Held ✓"). The arm sets off while Reachy still says "Now your turn".
+
+After a miss Reachy gives one concrete tip ("slide up like asking a question", "let it drop like a sigh",
+"one steady stream of air"), and on the retry John shows it: he starts on the pitch you sang and slides
+to the note, his line on the lane going from where you were to where the note is (`from` in the "sing"
+message; "John slides up to mi." on the display).
 
 The turn opens on the display as the arm starts your note, and your pitch is drawn from then on (grey
 while the piano also sounds). The pitch lane is on screen only for John's note, your turn and the

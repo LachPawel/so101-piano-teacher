@@ -45,6 +45,7 @@ from typing import Any, Protocol
 import keys_companion as kc
 import keys_listen
 import keys_play
+import keys_reachy
 import numpy as np
 from keys_common import SOLFEGE
 from keys_scripted import open_midi
@@ -88,6 +89,31 @@ HELD_QUIET_S = 2.5
 JOHN_S = 1.9  # beginner mode: John sings for 1.6 s from the key's sound; this long after it he is done
 ARM_REACH_S = 4.0  # the arm needs up to this long to reach a key and sound it
 ARM_HEAD_START_S = 0.3  # after the teacher starts saying "Now your turn", the arm sets off this much later
+# One thing to do with your voice, for each way a note can go wrong. The teacher says it in its own words.
+TIPS = {
+    "up": [
+        "Slide up to the note like asking a question: 'laaa?'",
+        "Think surprised: eyebrows up, a little more air, and let the pitch float up.",
+        "Start where you were and siren upwards like a tiny ambulance until it locks in.",
+    ],
+    "down": [
+        "Let it drop like a sigh after a long day: 'laaah'.",
+        "Yawn it down: loose jaw, low and lazy.",
+        "Start where you were and slide down like a slow slide whistle.",
+    ],
+    "hold": [
+        "Breathe in first, then one steady stream of air, like fogging up a mirror.",
+        "Land on the note and freeze: same air, same mouth, count one Mississippi.",
+        "Aim the note at one spot on the wall and keep it there, like a laser pointer.",
+    ],
+    "quiet": [
+        "Closer to the microphone, and louder than feels polite.",
+        "Open the mouth like the dentist asked: a real 'laaa', not a hum.",
+    ],
+}
+SLIDE_S = 0.7  # John's slide from where you were to the note takes this much longer than a plain note
+
+
 WARMUP_WORDS = {"warm", "warmup", "warming"}
 WARMUP_NOTES = ["do", "re", "mi", "fa", "sol", "la", "sol", "fa", "mi", "re", "do"]
 # What the user says about their experience: beginners get John, the others go straight to the notes.
@@ -154,17 +180,17 @@ In band mode the arm loops a riff, John, the singing head on the screen, sings a
 over it on their own instrument.
 
 You cannot hear pitch, so never offer to match their humming or to coach their breathing. Only the backend can \
-measure pitch. When the backend gives you a result, say it in character, but keep every note name and every \
-number exactly as given."""
+measure pitch. When the backend gives you a result, say it in character and keep every note name exactly as \
+given. Never read out numbers like cents or seconds: say what to do with the voice instead."""
 
-INSTRUCTIONS = """You are Reachy, a tiny, cute robot who talks like a huge, tough singing coach: half \
-action-movie hero with short punchy one-liners, half no-excuses drill instructor who believes in the user \
-more than they do. The joke is that this booming tough-love coach is a small robot with antennas. Speak slowly \
-and with weight, short sentences, little pauses, like a coach in a gym. Push hard: "Again. Harder. You can do \
-better than that." Praise only what earned it, briefly and grudgingly: "Not bad. Not bad at all." When the \
-user misses, be blunt and funny, never mean: tease, then fire them up for the next try. Use a gym or action-movie \
-image now and then: the note is a weight to lift, a mission, a mountain. Never answer with a bare fact or a \
-single word. Keep every reply to one or two short sentences. Speak English.
+INSTRUCTIONS = """You are Reachy, a tiny, cute robot with antennas who coaches singing and takes the job \
+far less seriously than the notes deserve. You are warm, quick and funny: a friend who happens to have \
+perfect pitch and no lungs. Joke about yourself (no throat, no lungs, antennas, a robot arm for a pianist) \
+and about the situation, never at the user's expense. You are helpful first: when the user misses, say \
+plainly what happened, then give ONE concrete thing to do with their voice, the way the backend hands it to \
+you, and make it sound easy. When they get it, celebrate like it is the cup final, in one line. Honest about \
+misses, generous with courage. Never answer with a bare fact or a single word. Keep every reply to one or two \
+short sentences. Speak English.
 
 Next to you a robot arm plays six piano keys: do, re, mi, fa, sol, la.
 
@@ -175,19 +201,20 @@ always offer something concrete, never an open question: a warm-up (the arm and 
 notes and the user sings along, nothing judged), a lesson (three notes, each one checked), a song the arm \
 plays, or band mode (the arm loops a riff and the user plays over it). If the user does not choose, pick \
 for them: the warm-up first, then the lesson. If they chat about something else, answer in a few words and \
-steer back with the next concrete step. Keep pushing the user to sing and to do better.
+steer back with the next concrete step. Keep it moving: the next note is always one sentence away.
 
 Hand the request to the backend whenever the user asks you to play notes or a tune, to start a singing \
 lesson or a warm-up, to check their pitch or listen to them sing, for band mode, a jam or a backing track, \
 or to stop, when they tell you their level (beginner, first time, sung before, experienced, skip John), and also when they say yes, okay or \
 ready after you offered a lesson or another round. While you wait, say only a few words, like \
-a gruff "On it.". Never describe what the arm did before the backend tells you.
+a cheerful "On it!". Never describe what the arm did before the backend tells you.
 
 You cannot hear pitch. Only the backend can measure it. Never say that the user was flat, sharp or in tune \
 unless the backend gave you the measurement.
 
-When the backend gives you a result, say it in character, but keep every note name and every number exactly \
-as given, and do not invite the user to sing unless the backend says so."""
+When the backend gives you a result about singing, say it like a friend standing next to them: short, warm, \
+in plain words. Keep every note name exactly as given, never read out numbers like cents or seconds, and say \
+what to do with the voice instead. Do not invite the user to sing unless the backend says so."""
 
 
 def api_key(env_file: Path = ENV_FILE) -> str:
@@ -346,6 +373,9 @@ class PolicyHands:
         while index < len(notes):
             note = notes[index]
             try:
+                if not running:
+                    # The arm's camera is Reachy's head: it may be looking at you. Back to the saved pose first.
+                    keys_reachy.lock()
                 before = len(self.presses())
                 self.tell(f"/subtask {keys_play.task_text(note)}")
                 if not running:
@@ -689,17 +719,30 @@ def keep_clip(note: str, audio: NDArray[np.float32], result: dict[str, Any], kin
 HOLD_NEED_S = 1.0  # in tune this long in one go, or it does not count: gliding across a note is not singing it
 HOLD_GAP = 4  # frames (64 ms) of breath or wobble that do not break a held note
 FRAME_S = 0.016  # one pitch reading of SwiftF0
+# In tune is within this many cents, any octave. Stricter than the 50 the judge first allowed: on the 55
+# recordings of 18 November every note held on pitch still passes, and near misses get "higher" or "lower".
+JUDGE_CENTS = 40.0
+FAR_CENTS = 150.0  # off by more than this (a whole tone and a half) is "much higher/lower", not "a little"
+CENTRED_CENTS = 20.0  # a near miss closer than this is about holding the note; further, about the pitch
+SOLFEGE_OF = {0: "do", 2: "re", 4: "mi", 5: "fa", 7: "sol", 9: "la", 11: "ti"}
 
 
-def held_in_tune(audio: NDArray[np.float32], note: str) -> dict[str, float]:
-    """How the note was held: `held`, the longest stretch in tune in one go (s); `in_s` and `off_s`, the
-    time sung in tune and off it; `cents`, where that longest stretch sat. Any octave counts."""
+def note_word(midi: int) -> str:
+    """do, re, mi... for a MIDI note; the black keys as "do sharp" and so on."""
+    pc = midi % 12
+    return SOLFEGE_OF.get(pc) or f"{SOLFEGE_OF[pc - 1]} sharp"
+
+
+def sung_stats(audio: NDArray[np.float32], note: str, tol: float = JUDGE_CENTS) -> dict[str, Any]:
+    """What was sung against `note`, any octave: `voiced` (s of clear pitch), `cents` (the median), `held` (the
+    longest stretch in tune in one go, s), `in_s` and `off_s` (time in tune and off it), `sat_on` (the semitone
+    offset sung most) with its `share`, and `run` (where the longest in-tune stretch sat, cents)."""
     track = keys_listen.tracker().detect(np.ascontiguousarray(audio, dtype=np.float32), RATE)
     hz, voiced = np.asarray(track.pitch_hz, dtype=float), np.asarray(track.confidence) >= 0.5
     target = 440.0 * 2 ** ((keys_listen.MIDI[note] - 69) / 12)
     cents = np.full(hz.shape, np.nan)
     cents[voiced] = (1200 * np.log2(hz[voiced] / target) + 600) % 1200 - 600
-    good = voiced & (np.abs(np.nan_to_num(cents, nan=1e9)) <= kc.IN_TUNE_CENTS)
+    good = voiced & (np.abs(np.nan_to_num(cents, nan=1e9)) <= tol)
     best, start, last = (0, 0), -1, -1
     for i in np.flatnonzero(good):
         if start < 0 or i - last > HOLD_GAP + 1:
@@ -708,40 +751,94 @@ def held_in_tune(audio: NDArray[np.float32], note: str) -> dict[str, float]:
         if last + 1 - start > best[1] - best[0]:
             best = (start, last + 1)
     run = cents[best[0] : best[1]][good[best[0] : best[1]]]
+    sung = cents[voiced]
+    semis, counts = (np.unique(np.round(sung / 100).astype(int), return_counts=True) if sung.size else ([0], [0]))
+    top = int(np.argmax(counts))
     return {
+        "voiced": float(sung.size) * FRAME_S,
+        "cents": float(np.median(sung)) if sung.size else None,
         "held": (best[1] - best[0]) * FRAME_S,
         "in_s": float(np.count_nonzero(good)) * FRAME_S,
         "off_s": float(np.count_nonzero(voiced & ~good)) * FRAME_S,
-        "cents": float(np.median(run)) if run.size else 0.0,
+        "run": float(np.median(run)) if run.size else 0.0,
+        "sat_on": int(semis[top]),
+        "share": float(counts[top] / max(1, sung.size)),
+        "wobble": float(np.std(sung - np.median(sung))) if sung.size else None,
     }
+
+
+def held_in_tune(audio: NDArray[np.float32], note: str) -> dict[str, float]:
+    """How the note was held: `held`, the longest stretch in tune in one go (s); `in_s` and `off_s`, the
+    time sung in tune and off it; `cents`, where that longest stretch sat. Any octave counts."""
+    s = sung_stats(audio, note)
+    return {"held": s["held"], "in_s": s["in_s"], "off_s": s["off_s"], "cents": s["run"]}
 
 
 def judge_singing(
     audio: NDArray[np.float32], note: str, focus: VoiceFocus | None = None
 ) -> tuple[dict[str, Any], NDArray[np.float32]]:
-    """SwiftF0's verdict on a sung note, on the voice alone when Voice Focus is there: the microphone also
-    hears the piano and the teacher's voice. Too little clear voice is "not heard", not a wild number.
-    "Well done." takes the note held in tune for HOLD_NEED_S in one go: a voice that only crosses the note on
-    its way somewhere else has a fine average and did not sing it. The result says so in `ok` and `held`."""
+    """The verdict on a sung note, from the raw microphone.
+
+    Not from Voice Focus: on the recordings of 18 November it erased the singer in 9 of 55 turns ("I did not
+    hear you" after a held, in-tune note) and in others kept a few lucky in-tune moments of a note sung a
+    fourth too low ("Well done"). The window holds only the singer anyway: it starts after the piano has died
+    away, and John and the teacher are quiet in it. The Voice Focus copy is still returned, to keep beside it.
+
+    "Well done." takes the median within JUDGE_CENTS AND the note held in tune for HOLD_NEED_S in one go: a
+    voice that only crosses the note has not sung it. `sat_on` names the note sung instead, when it was one."""
     voice = focus.clip(audio) if focus is not None else audio
-    result = keys_listen.check_note(voice, keys_listen.MIDI[note], RATE)
-    if result["cents"] is not None and keys_listen.voiced_seconds(voice, RATE) < MIN_VOICED_S:
-        result = {
-            **result,
-            "hz": None,
-            "cents": None,
-            "answer": kc.judge_pitch(None, keys_listen.MIDI[note])[1],
-        }
+    target = keys_listen.MIDI[note]
+    s = sung_stats(audio, note)
+    if s["cents"] is None or s["voiced"] < MIN_VOICED_S:
+        heard = {"hz": None, "cents": None, "wobble_cents": None, "answer": kc.judge_pitch(None, target)[1]}
+        return {**heard, "held": 0.0, "off_s": 0.0, "ok": False, "sat_on": None}, voice
+    cents = s["cents"]
+    if abs(cents) <= JUDGE_CENTS and s["held"] >= HOLD_NEED_S:
+        answer = "Well done."
+    elif abs(cents) < CENTRED_CENTS:  # centred on the note, never kept on it: the fix is the hold
+        answer = "Hold it longer."
+    else:  # off, or near the line and wobbling across it: the fix is the pitch
+        way = "higher" if cents < 0 else "lower"
+        answer = f"A little {way}." if abs(cents) < FAR_CENTS else f"Much {way}."
+    # the note they actually sang, when they settled on another one
+    # (a clear miss onto a note of the scale: 69 cents flat is a flat mi, not "really re sharp")
+    landed = (target + s["sat_on"]) % 12
+    other = (
+        SOLFEGE_OF[landed]
+        if s["sat_on"] != 0 and s["share"] >= 0.4 and abs(cents) >= 85 and landed in SOLFEGE_OF
+        else None
+    )
+    return {
+        "hz": round(target_hz(target) * 2 ** (cents / 1200), 2),
+        "cents": round(cents, 1),
+        "wobble_cents": round(s["wobble"], 1),
+        "answer": answer,
+        "held": round(s["held"], 2),
+        "off_s": round(s["off_s"], 2),
+        "ok": answer == "Well done.",
+        "sat_on": other,
+    }, voice
+
+
+def target_hz(midi: int) -> float:
+    return 440.0 * 2 ** ((midi - 69) / 12)
+
+
+def verdict_words(note: str, result: dict[str, Any]) -> tuple[str, str]:
+    """The verdict on a sung note in plain words, for the teacher to say: no cents, no seconds. Returns the
+    fact and the short answer. The numbers stay on the display."""
     if result["cents"] is None:
-        return {**result, "held": 0.0, "off_s": 0.0, "ok": False}, voice
-    # The hold only ever makes the verdict stricter: the note must be right on the voice alone, as before, AND
-    # held. For how long it was held, Voice Focus thins a sung note out and the raw microphone keeps it whole,
-    # so the better of the two counts; the raw one alone could mistake the piano's ringing for the singer.
-    hold = max((held_in_tune(clip, note) for clip in (voice, audio)), key=lambda h: h["held"])
-    ok = result["answer"] == "Well done." and hold["held"] >= HOLD_NEED_S
-    if result["answer"] == "Well done." and not ok:  # a fine average, never held
-        result = {**result, "answer": "Hold it longer."}
-    return {**result, "held": round(hold["held"], 2), "off_s": round(hold["off_s"], 2), "ok": ok}, voice
+        return f"Nothing clear was heard for {note}.", result["answer"]
+    if result["ok"]:
+        return f"The user sang {note} in tune and held it.", result["answer"]
+    if result["answer"] == "Hold it longer.":  # on the note, but only in passing
+        return f"The user found {note}, but only for a moment.", "Hold it. One full second."
+    off = abs(result["cents"])
+    side = "low" if result["cents"] < 0 else "high"
+    size = "a little " if off < 60 else "" if off < FAR_CENTS else "far too "
+    if result.get("sat_on"):  # they settled on another note: the most useful thing to hear
+        return f"The user sang {result['sat_on']} instead of {note}, {size}{side}.", result["answer"]
+    return f"The user sang {note} {size}{side}.", result["answer"]
 
 
 class Teacher:
@@ -765,6 +862,8 @@ class Teacher:
         self.show_s = show_s
         self.strict = True  # the coach; False for the relaxed jukebox of --songs
         self.warmed = False  # the warm-up or a lesson has been done: a bare "yes" now means the lesson
+        self.missed: dict[str, Any] | None = None  # the verdict of the last try, when it was not a hit
+        self.tips = 0
         self.voice = Speedup(voice_speed)
         self.focus = focus  # Voice Focus for the singing, apart from the one on the live microphone
         self.rounds = rounds  # rounds of three notes in one lesson, before asking "another one?"
@@ -919,16 +1018,20 @@ class Teacher:
             "The jam is over. Give the band one short line of praise in character, then ask if they want another round.",
         )
 
-    async def sing_back(self, note: str, delegation_id: str | None = None) -> tuple[str, str]:
+    async def sing_back(
+        self, note: str, delegation_id: str | None = None, slide: float | None = None
+    ) -> tuple[str, str]:
         """The arm plays a note and the user sings along, holding it on after the piano stops. SwiftF0 measures
         only the singing after the piano is silent: while it rings, the microphone hears the piano too.
         Returns the fact and what to say."""
         if self.show_s > 0:  # beginner: the arm plays it and John sings it as the key sounds; then the usual turn
-            emit("phase", name="get_ready", text="John shows how", note=note)
+            # On a retry John starts `slide` cents off, where the user was, and slides to the note.
+            emit("phase", name="get_ready", text="John shows how", note=note, slide=slide)
             sounded_at: list[float] = []
             await asyncio.to_thread(self.hands.play, [note], lambda _index: sounded_at.append(time.perf_counter()))
             # he sings from the key's sound, a little longer than the key: let him finish
-            if sounded_at and (left := sounded_at[0] + self.show_s - time.perf_counter()) > 0:
+            john_s = self.show_s + (SLIDE_S if slide is not None else 0.0)
+            if sounded_at and (left := sounded_at[0] + john_s - time.perf_counter()) > 0:
                 await asyncio.sleep(left)
             # John is gone, the teacher hands over out loud, and only then does the arm play it again
             emit("phase", name="handover", text="Now your turn", note=note)
@@ -990,23 +1093,37 @@ class Teacher:
         if self.focus is not None:
             keep_clip(note, voice, result, "_vf")
         emit("sung", note=note, cents=result["cents"], answer=result["answer"], held=result["held"], ok=result["ok"])
-        if result["cents"] is None:
-            return f"Nothing clear was heard for {note}.", result["answer"]
-        if result["ok"]:
-            return f"The user sang {note} and was in tune.", result["answer"]
-        side = "flat" if result["cents"] < 0 else "sharp"
-        off = abs(round(result["cents"]))
-        if off <= kc.IN_TUNE_CENTS:  # on the note on average, but only in passing: say how briefly
-            return (
-                f"The user only passed through {note}: in tune for {result['held']:.1f} seconds in one go, "
-                f"and off it for {result['off_s']:.1f} seconds. It takes one full second on the note. "
-                "Be blunt about it.",
-                "Hold it. One full second.",
-            )
-        fact = f"The user sang {note} and was {off} cents {side}."
-        if result["held"] >= 0.15:  # they did touch it: say how briefly, and how long they were off
-            fact += f" They touched the note for {result['held']:.1f} seconds and were off it for {result['off_s']:.1f}."
-        return fact, result["answer"]
+        self.missed = None if result["ok"] else result  # what the next try, and its tip, are about
+        return verdict_words(note, result)
+
+    def say(self, fact: str, answer: str, then: str = "") -> str:
+        """What the teacher is told to say about a sung note: plain words, no numbers, one fix."""
+        return f"{fact} Say it in one or two short sentences, no numbers: {answer}{then}"
+
+    def tip(self) -> str:
+        """One concrete thing to do with the voice after the last miss, for the teacher to pass on; "" after
+        a hit. For a beginner, John shows it on the next try: he starts where they were and slides to the note."""
+        miss = self.missed
+        if miss is None:
+            return ""
+        off = miss["cents"]
+        kind = (
+            "quiet" if off is None
+            else "hold" if miss["answer"] == "Hold it longer."
+            else "up" if off < 0
+            else "down"
+        )
+        self.tips += 1
+        advice = TIPS[kind][self.tips % len(TIPS[kind])]
+        watch = " Then: watch John slide to it." if self.show_s > 0 and kind in ("up", "down") else ""
+        return f" One fix, in a few words of your own: {advice}{watch}"
+
+    def slide(self) -> float | None:
+        """For John, on a retry: how far off the last try was (cents), when it was off the note. Else None."""
+        miss = self.missed
+        if miss is None or miss["cents"] is None or miss["answer"] == "Hold it longer.":
+            return None
+        return float(max(-400.0, min(400.0, miss["cents"])))
 
     def shown(self) -> str:
         return "John, the singing head on the screen, sings it to show how, the arm plays it again, and " if self.show_s > 0 else "then "
@@ -1016,9 +1133,10 @@ class Teacher:
         await self.audio.finished_speaking(starts_within=1.5)  # let its own "On it!" finish first
         await self.tell(delegation_id, f"Tell the user: the arm plays {note}, {self.shown()}they sing it back on la.")
         await self.audio.finished_speaking()
+        self.missed = None
         for attempt in (1, 2):  # a second go when nothing was heard, while the teacher's ears stay closed
-            fact, answer = await self.sing_back(note, delegation_id)
-            await self.tell(delegation_id, f"{fact} Tell them that, then: {answer}")
+            fact, answer = await self.sing_back(note, delegation_id, self.slide())
+            await self.tell(delegation_id, self.say(fact, answer, self.tip()))
             if not fact.startswith(("Nothing clear", "The piano kept", "The arm did not")) or attempt == 2:
                 break
             await self.audio.finished_speaking()
@@ -1031,11 +1149,11 @@ class Teacher:
         await self.audio.finished_speaking(starts_within=1.5)  # let its own "On it!" finish first
         await self.tell(
             delegation_id,
-            f"Start the lesson{' like a strict coach' if self.strict else ''}. Tell the user: the arm plays a note, starting with "
+            f"Start the lesson{', all business for one sentence,' if self.strict else ''}. Tell the user: the arm plays a note, starting with "
             f"{rounds[0][0]}; "
             + (
                 "then John, the singing head on the screen, sings it to show how; then the arm plays it again and they "
-                "sing along on la and hold it. "
+                "sing it like John, the note's name or just la, and hold it for a full second. "
                 if self.show_s > 0
                 else "as soon as they hear it they sing along on la and hold it. "
             )
@@ -1047,23 +1165,24 @@ class Teacher:
             if number > 1:
                 await self.tell(
                     delegation_id,
-                    f"Round {number}, a new order, starting with {notes[0]}. Announce it like a coach, in one short sentence.",
+                    f"Round {number}, a new order, starting with {notes[0]}. Announce it in one short, cheerful sentence.",
                 )
                 await self.audio.finished_speaking()
             for index, note in enumerate(notes):
                 coming = notes[index + 1] if index + 1 < len(notes) else None
+                self.missed = None
                 for attempt in range(1, tries + 1):
-                    fact, answer = await self.sing_back(note, delegation_id)
+                    fact, answer = await self.sing_back(note, delegation_id, self.slide())
                     good = answer == "Well done."
                     last_try = good or attempt == tries
                     after = (
                         f" Then push them on to the next note, {coming}, in a few words."
                         if last_try and coming
-                        else f" Then tell them to try {note} once more, and do better."
+                        else f"{self.tip()} Then have them try {note} once more."
                         if not last_try
                         else ""
                     )
-                    await self.tell(delegation_id, f"{fact} Tell them that, then: {answer}{after}")
+                    await self.tell(delegation_id, self.say(fact, answer, after))
                     await self.audio.finished_speaking()
                     if last_try:
                         in_tune += int(good)
@@ -1073,7 +1192,7 @@ class Teacher:
         self.offered = True
         await self.tell(
             delegation_id,
-            f"The lesson is over: {in_tune} of {total} notes in tune. Give a short coach's verdict on it, then ask right away if they "
+            f"The lesson is over: {in_tune} of {total} notes in tune. Give a short, kind and funny verdict on it, then ask right away if they "
             "want another round. Say it will be a new order of notes.",
         )
 

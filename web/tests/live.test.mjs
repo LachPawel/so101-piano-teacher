@@ -9,6 +9,7 @@ test("the big words say whose turn it is", () => {
   assert.deepEqual(headline({ phase: "playing", asked: "mi" }), { html: "The arm<br>plays <em>mi</em>.", tone: "arm" });
   assert.equal(headline({ phase: "get_ready", asked: "sol" }).tone, "ready");
   assert.equal(headline({ phase: "handover", asked: "sol" }).html, "Your turn:<br>sing <em>sol</em>.");
+  assert.equal(headline({ phase: "get_ready", asked: "mi", slide: -130 }).html, "John slides<br>up to <em>mi</em>.");
   assert.equal(headline({ phase: "playing", asked: "mi", mode: "band" }).html, "Band mode.<br>Play along.");
   assert.deepEqual(headline({ phase: "your_turn", asked: "la" }), { html: "Your turn:<br>sing <em>la</em>.", tone: "sing" });
   assert.equal(headline({ phase: "feedback", asked: "la", sung: { cents: -30 } }).html, "In tune.<br>Well done.");
@@ -22,8 +23,8 @@ test("cents in words, with the teacher's tolerance", () => {
   assert.equal(centsWords(0.2), "spot on");
   assert.equal(centsWords(-20), "20 cents under, close enough");
   assert.equal(centsWords(120), "120 cents too high");
-  assert.equal(verdict(49).tone, "ok");
-  assert.equal(verdict(-51).word, "A little higher.");
+  assert.equal(verdict(39).tone, "ok");
+  assert.equal(verdict(-45).word, "A little higher."); // 40 cents is the line, as in keys_voice.py
   assert.equal(verdict(null).word, "Not heard.");
   // In tune on average but never held for a second: not good enough.
   assert.deepEqual(verdict(10, false), { tone: "off", word: "Hold it longer.", html: "Hold it.<br>A full second." });

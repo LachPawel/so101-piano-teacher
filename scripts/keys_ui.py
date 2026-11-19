@@ -121,6 +121,7 @@ class Hub:
             "press": None,
             "midi": False,
             "ears_on": False,
+            "slide": None,
             "mode": "",  # "band": the arm loops a riff, John sings along, you play over it
         }
         self.last_event = time.time()
@@ -209,6 +210,7 @@ class Hub:
                 phase=name,
                 phase_text=event.get("text", ""),
                 asked=event.get("note"),
+                slide=event.get("slide"),  # get_ready on a retry: John starts this many cents off and slides
                 arm_busy=state["arm_busy"] or name == "loading",
             )
 
@@ -477,8 +479,39 @@ def demo(hub: Hub, stop: threading.Event) -> None:
         hub.piano_until = time.time() + PIANO_TAIL_S
         show("done")
         time.sleep(2.6)
+        show("sung", note="mi", cents=-130.0, answer="A little higher.", held=0.2, ok=False)
+        show("teacher", text="A bit under mi. Slide up like asking a question. Watch John.")
+        target[0] = None
+        time.sleep(3.5)
+        # The retry: John starts where you were and slides to the note, as the arm plays it.
+        show("phase", name="get_ready", text="John shows how", note="mi", slide=-130.0)
+        show("tune", notes=["mi"], policy="flow+smooth+60hz (demo)")
+        show("ask", note="mi", index=0)
+        time.sleep(1.2)
+        hub.set(keys_down=[64], press={"note": 64, "name": "E4", "ok": True, "t": time.time()})
+        show("result", index=0, heard="E4")
+        time.sleep(1.0)
+        hub.set(keys_down=[])
+        hub.piano_until = time.time() + PIANO_TAIL_S
+        show("done")
+        time.sleep(1.6)
+        show("phase", name="handover", text="Now your turn", note="mi")
+        show("teacher", text="Now your turn.")
+        time.sleep(1.6)
+        show("your_turn", note="mi", seconds=9.0)
+        show("tune", notes=["mi"], policy="flow+smooth+60hz (demo)")
+        show("ask", note="mi", index=0)
+        time.sleep(1.2)
+        hub.set(keys_down=[64], press={"note": 64, "name": "E4", "ok": True, "t": time.time()})
+        show("result", index=0, heard="E4")
+        show("your_turn", note="mi", seconds=6.0)
+        time.sleep(1.0)
+        hub.set(keys_down=[])
+        hub.piano_until = time.time() + PIANO_TAIL_S
+        show("done")
+        time.sleep(2.6)
         show("sung", note="mi", cents=-20.0, answer="Well done.", held=1.8, ok=True)
-        show("teacher", text="You sang mi and were in tune. Well done.")
+        show("teacher", text="There it is! Mi, held like a champion.")
         target[0] = None
         time.sleep(4.0)
         # Band mode: the arm loops a riff, John sings each key it presses, you play over it.
@@ -584,6 +617,12 @@ def main(argv: list[str] | None = None) -> None:
         default="auto",
         help="Move Reachy Mini's head between notes (keys_reachy.py). Off with --demo",
     )
+    parser.add_argument(
+        "--look",
+        choices=["on", "off"],
+        default="on",
+        help="Reachy turns to look at whoever speaks while the arm is still (its microphone array)",
+    )
     args = parser.parse_args(argv)
     web = find_web(args.web)
 
@@ -600,7 +639,9 @@ def main(argv: list[str] | None = None) -> None:
     if args.reachy == "auto" and not args.demo:
         import keys_reachy
 
-        reachy = threading.Thread(target=keys_reachy.follow, args=(hub, stop), daemon=True)
+        reachy = threading.Thread(
+            target=keys_reachy.follow, args=(hub, stop), kwargs={"look": args.look == "on"}, daemon=True
+        )
         reachy.start()
 
     try:

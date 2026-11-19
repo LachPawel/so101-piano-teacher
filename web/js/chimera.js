@@ -14,6 +14,7 @@ const BY_WORD = Object.fromEntries(KEYS.map((entry) => [entry.word, entry]));
 const SING = new Set(["get_ready"]);
 const SHOWN = new Set(["get_ready"]);
 export const SING_SECONDS = 1.6;
+export const SLIDE_SECONDS = 0.7; // a slide from where you were to the note takes this much longer
 export const BAND_SECONDS = 0.5; // band mode: John's backing note for each key the arm presses
 
 const ALONG = new Set(["band", "warmup"]); // John sings along with the arm, key by key
@@ -139,7 +140,10 @@ export function startChimera(onPitch = () => {}) {
         post({ type: "idle", text: now.mode === "band" ? "Band mode. I do backing vocals. I've always been a background throat." : "Warm-up. Sing along with me. Nobody is judging. I can't even hear you." });
       }
     } else if (step.sing) {
-      post({ type: "sing", midi: BY_WORD[step.sing].midi, seconds: SING_SECONDS, name: step.sing });
+      // On a retry he starts where you were (so many cents off) and slides to the note.
+      const off = typeof now.slide === "number" ? Math.max(-400, Math.min(400, now.slide)) : null;
+      const midi = BY_WORD[step.sing].midi;
+      post({ type: "sing", midi, seconds: SING_SECONDS + (off === null ? 0 : SLIDE_SECONDS), name: step.sing, ...(off === null ? {} : { from: midi + off / 100 }) });
     } else if (now.phase !== was?.phase) {
       const text = coachIdle(now, tone);
       if (text) post({ type: "idle", text });
